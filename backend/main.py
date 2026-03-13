@@ -138,19 +138,11 @@ async def voice_websocket(websocket: WebSocket, driver_id: str):
     logger.info(f"Voice WS connected: driver={driver_id}")
 
     try:
+        # gemini-2.5-flash-native-audio does not support speech_config/VoiceConfig
+        # system_instruction must be a plain string, response_modalities AUDIO only
         config = types.LiveConnectConfig(
-            response_modalities=["AUDIO", "TEXT"],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name="Aoede"  # warm, professional female voice
-                    )
-                )
-            ),
-            system_instruction=types.Content(
-                parts=[types.Part(text=get_system_prompt(driver_id))],
-                role="user",
-            ),
+            response_modalities=["AUDIO"],
+            system_instruction=get_system_prompt(driver_id),
             tools=get_tools(),
         )
 
@@ -158,9 +150,13 @@ async def voice_websocket(websocket: WebSocket, driver_id: str):
             logger.info(f"Gemini Live session started: driver={driver_id}")
 
             # Trigger opening greeting
-            await session.send(
-                input=f"[The driver {MOCK_DRIVERS.get(driver_id, {}).get('name', 'Driver')} has just connected. Greet them as Sally briefly — one sentence.]",
-                end_of_turn=True,
+            driver_name = MOCK_DRIVERS.get(driver_id, {}).get("name", "Driver")
+            await session.send_client_content(
+                turns=types.Content(
+                    parts=[types.Part(text=f"[Driver {driver_name} has just connected. Greet them as Sally in one short sentence.]")],
+                    role="user",
+                ),
+                turn_complete=True,
             )
 
             async def receive_from_browser():
@@ -171,21 +167,20 @@ async def voice_websocket(websocket: WebSocket, driver_id: str):
 
                         if msg["type"] == "audio":
                             audio_bytes = base64.b64decode(msg["data"])
-                            await session.send(
-                                input=types.LiveClientRealtimeInput(
-                                    media_chunks=[
-                                        types.Blob(
-                                            data=audio_bytes,
-                                            mime_type="audio/pcm;rate=16000",
-                                        )
-                                    ]
+                            await session.send_realtime_input(
+                                media=types.Blob(
+                                    data=audio_bytes,
+                                    mime_type="audio/pcm;rate=16000",
                                 )
                             )
 
                         elif msg["type"] == "text":
-                            await session.send(
-                                input=msg["text"],
-                                end_of_turn=True,
+                            await session.send_client_content(
+                                turns=types.Content(
+                                    parts=[types.Part(text=msg["text"])],
+                                    role="user",
+                                ),
+                                turn_complete=True,
                             )
 
                         elif msg["type"] == "ping":
@@ -266,16 +261,14 @@ async def voice_websocket(websocket: WebSocket, driver_id: str):
                                 )
 
                                 # Return result to Gemini
-                                await session.send(
-                                    input=types.LiveClientToolResponse(
-                                        function_responses=[
-                                            types.FunctionResponse(
-                                                name=fc.name,
-                                                id=fc.id,
-                                                response=result,
-                                            )
-                                        ]
-                                    )
+                                await session.send_tool_response(
+                                    function_responses=[
+                                        types.FunctionResponse(
+                                            name=fc.name,
+                                            id=fc.id,
+                                            response=result,
+                                        )
+                                    ]
                                 )
 
                                 # Notify browser with result
