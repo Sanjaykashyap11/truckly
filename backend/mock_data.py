@@ -1,4 +1,4 @@
-"""Mock data for Truckly demo — simulates live ELD/TMS/dispatch data"""
+"""Mock data for Trucky demo — fallback when Samsara ELD is unavailable"""
 
 from datetime import datetime
 

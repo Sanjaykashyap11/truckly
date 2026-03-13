@@ -22,10 +22,10 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 // ─── Demo scenarios for judges ────────────────────────────────────────────────
 const DEMO_SCENARIOS = [
-  { label: "Check HOS", text: "Hey Sally, how are my hours looking for Boston?" },
+  { label: "Check HOS", text: "Hey Trucky, how are my hours looking for Boston?" },
   { label: "Route Question", text: "My GPS is showing a faster route through Merritt Parkway." },
-  { label: "Fuel Stop", text: "Sally, I need to find a fuel stop soon." },
-  { label: "Breakdown", text: "Sally — tire blowout. I'm on I-95 westbound near Exit 24 New Jersey." },
+  { label: "Fuel Stop", text: "Trucky, I need to find a fuel stop soon." },
+  { label: "Breakdown", text: "Trucky — tire blowout. I'm on I-95 westbound near Exit 24 New Jersey." },
   { label: "Can I push?", text: "The receiver wants me to push through and deliver tonight. Can I make it?" },
 ];
 
@@ -65,7 +65,7 @@ function DriverPageInner() {
 
   const [isConnected, setIsConnected] = useState(false);
   const [isListening, setIsListening] = useState(false);
-  const [isSallyTalking, setIsSallyTalking] = useState(false);
+  const [isTruckyTalking, setIsTruckyTalking] = useState(false);
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
   const [toolActivities, setToolActivities] = useState<ToolActivity[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +74,7 @@ function DriverPageInner() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);   // mic capture context
-  const playbackCtxRef = useRef<AudioContext | null>(null);    // Sally playback context (persistent)
+  const playbackCtxRef = useRef<AudioContext | null>(null);    // Trucky playback context (persistent)
   const playbackTimeRef = useRef<number>(0);                   // running clock for gapless scheduling
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -123,9 +123,9 @@ function DriverPageInner() {
     playbackTimeRef.current = startAt + audioBuffer.duration;
 
     source.onended = () => {
-      // If nothing else is scheduled, mark Sally as done talking
+      // If nothing else is scheduled, mark Trucky as done talking
       if (playbackTimeRef.current <= ctx.currentTime + 0.05) {
-        setIsSallyTalking(false);
+        setIsTruckyTalking(false);
         isPlayingRef.current = false;
       }
     };
@@ -134,7 +134,7 @@ function DriverPageInner() {
   const playAudioQueue = useCallback(() => {
     if (audioQueueRef.current.length === 0) return;
     isPlayingRef.current = true;
-    setIsSallyTalking(true);
+    setIsTruckyTalking(true);
 
     while (audioQueueRef.current.length > 0) {
       const buf = audioQueueRef.current.shift()!;
@@ -152,7 +152,7 @@ function DriverPageInner() {
 
     // Mic capture context at native rate (we resample to 16kHz before sending)
     audioContextRef.current = new AudioContext();
-    // Persistent 24kHz playback context for gapless Sally audio
+    // Persistent 24kHz playback context for gapless Trucky audio
     playbackCtxRef.current = new AudioContext({ sampleRate: 24000 });
     playbackTimeRef.current = 0;
 
@@ -167,7 +167,7 @@ function DriverPageInner() {
     ws.onclose = (event) => {
       setIsConnected(false);
       setIsListening(false);
-      setIsSallyTalking(false);
+      setIsTruckyTalking(false);
       stopMic();
       // Auto-reconnect on transient Gemini server errors (1011)
       if (event.code === 1011 || event.code === 1006) {
@@ -388,7 +388,7 @@ function DriverPageInner() {
                 <Truck className="w-4 h-4 text-white dark:text-black" />
               </div>
               <div>
-                <h1 className="text-sm font-bold text-foreground">Sally</h1>
+                <h1 className="text-sm font-bold text-foreground">Trucky</h1>
                 <p className="text-xs text-muted-foreground">
                   {(driverInfo?.name as string) || "Loading..."}
                 </p>
@@ -435,7 +435,7 @@ function DriverPageInner() {
             />
             <span className="text-sm text-muted-foreground">
               {connectionStatus === "connected"
-                ? "Connected to Sally"
+                ? "Connected to Trucky"
                 : connectionStatus === "connecting"
                 ? "Connecting..."
                 : connectionStatus === "error"
@@ -452,21 +452,21 @@ function DriverPageInner() {
                 className={`w-24 h-24 rounded-full flex items-center justify-center transition-all duration-200 ${
                   isListening
                     ? "bg-red-500 hover:bg-red-600 voice-pulse shadow-lg shadow-red-500/30"
-                    : isSallyTalking
+                    : isTruckyTalking
                     ? "bg-gray-700 cursor-not-allowed"
                     : "bg-black dark:bg-white hover:opacity-90 shadow-lg"
                 }`}
-                disabled={isSallyTalking}
+                disabled={isTruckyTalking}
               >
                 {isListening ? (
                   <Mic className="w-10 h-10 text-white" />
                 ) : (
-                  <MicOff className={`w-10 h-10 ${isSallyTalking ? "text-gray-400" : "text-white dark:text-black"}`} />
+                  <MicOff className={`w-10 h-10 ${isTruckyTalking ? "text-gray-400" : "text-white dark:text-black"}`} />
                 )}
               </button>
 
-              {/* Waveform when Sally talks */}
-              {isSallyTalking && (
+              {/* Waveform when Trucky talks */}
+              {isTruckyTalking && (
                 <div className="flex items-end gap-1 h-6">
                   <div className="w-1.5 bg-gray-400 rounded-full bar-1" />
                   <div className="w-1.5 bg-gray-400 rounded-full bar-2" />
@@ -479,9 +479,9 @@ function DriverPageInner() {
               <p className="text-xs text-muted-foreground text-center">
                 {isListening
                   ? "Listening... tap to stop"
-                  : isSallyTalking
-                  ? "Sally is speaking..."
-                  : "Tap mic to talk to Sally"}
+                  : isTruckyTalking
+                  ? "Trucky is speaking..."
+                  : "Tap mic to talk to Trucky"}
               </p>
 
               <button
@@ -498,7 +498,7 @@ function DriverPageInner() {
               className="flex items-center gap-3 bg-black dark:bg-white text-white dark:text-black px-8 py-4 rounded-xl font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
             >
               <Radio className="w-5 h-5" />
-              {connectionStatus === "connecting" ? "Connecting to Sally..." : "Start Talking to Sally"}
+              {connectionStatus === "connecting" ? "Connecting to Trucky..." : "Start Talking to Trucky"}
             </button>
           )}
 
@@ -553,7 +553,7 @@ function DriverPageInner() {
                       }`}
                     >
                       <p className="font-medium mb-0.5 opacity-60">
-                        {t.speaker === "sally" ? "Sally" : "You"}
+                        {t.speaker === "sally" ? "Trucky" : "You"}
                       </p>
                       <p className="leading-relaxed">{t.text}</p>
                     </div>
@@ -568,12 +568,12 @@ function DriverPageInner() {
           <div className="bg-card border border-border rounded-xl overflow-hidden flex flex-col">
             <div className="px-4 py-3 border-b border-border flex items-center gap-2">
               <Shield className="w-4 h-4 text-muted-foreground" />
-              <h2 className="text-sm font-medium text-foreground">Sally Actions</h2>
+              <h2 className="text-sm font-medium text-foreground">Trucky Actions</h2>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-2 min-h-[200px] max-h-[320px]">
               {toolActivities.length === 0 ? (
                 <p className="text-xs text-muted-foreground text-center mt-8">
-                  Sally's actions will appear here (HOS checks, route safety, stakeholder alerts).
+                  Trucky's actions will appear here (HOS checks, route safety, stakeholder alerts).
                 </p>
               ) : (
                 [...toolActivities].reverse().map((activity) => {
@@ -589,7 +589,7 @@ function DriverPageInner() {
                         <p className="text-xs font-medium text-foreground">{label}</p>
                         {activity.result && (
                           <div className="mt-1 space-y-0.5">
-                            {activity.result.compliance && (
+                            {activity.result.compliance != null && (
                               <p
                                 className={`text-xs font-medium ${
                                   String(activity.result.compliance).includes("COMPLIANT") &&
@@ -612,22 +612,22 @@ function DriverPageInner() {
                                 ) : (
                                   <AlertTriangle className="w-3 h-3" />
                                 )}
-                                {activity.result.safe_for_truck ? "Route approved" : String(activity.result.reason)}
+                                {activity.result.safe_for_truck ? "Route approved" : String(activity.result.reason ?? "")}
                               </p>
                             )}
-                            {activity.result.notifications_sent && (
+                            {activity.result.notifications_sent != null && (
                               <p className="text-xs text-green-400 flex items-center gap-1">
                                 <CheckCircle className="w-3 h-3" />
                                 All stakeholders notified
                               </p>
                             )}
-                            {activity.result.emergency_activated && (
+                            {activity.result.emergency_activated != null && (
                               <p className="text-xs text-red-400 flex items-center gap-1">
                                 <AlertTriangle className="w-3 h-3" />
                                 Emergency protocol activated
                               </p>
                             )}
-                            {activity.result.drive_time_remaining && (
+                            {activity.result.drive_time_remaining != null && (
                               <p className="text-xs text-muted-foreground">
                                 HOS: {String(activity.result.drive_time_remaining)} remaining
                               </p>
