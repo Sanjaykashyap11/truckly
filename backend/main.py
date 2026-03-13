@@ -44,9 +44,13 @@ if USE_VERTEX:
         location=os.environ.get("GCP_REGION", "us-central1"),
     )
 else:
-    client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+    # Live API (bidiGenerateContent) requires v1alpha — not available on v1beta
+    client = genai.Client(
+        api_key=os.environ.get("GEMINI_API_KEY"),
+        http_options=types.HttpOptions(api_version="v1alpha"),
+    )
 
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-exp")
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-live-001")
 
 
 # ─── System prompt ────────────────────────────────────────────────────────────
