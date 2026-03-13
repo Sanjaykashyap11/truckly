@@ -50,7 +50,7 @@ else:
         http_options=types.HttpOptions(api_version="v1alpha"),
     )
 
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-live-001")
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-native-audio-latest")
 
 
 # ─── System prompt ────────────────────────────────────────────────────────────
