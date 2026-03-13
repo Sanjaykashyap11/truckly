@@ -192,106 +192,95 @@ async def voice_websocket(websocket: WebSocket, driver_id: str):
                     logger.error(f"receive_from_browser error: {e}")
 
             async def send_to_browser():
-                """Forward Gemini responses to browser"""
+                """Forward Gemini responses to browser — loops across turns"""
                 try:
-                    async for response in session.receive():
+                    # session.receive() exhausts after each turn_complete.
+                    # Wrap in while True so we re-enter it for every new turn.
+                    while True:
+                      async for response in session.receive():
+                        try:
+                            logger.info(f"Gemini msg — data:{bool(response.data)} sc:{bool(response.server_content)} tool:{bool(response.tool_call)}")
 
-                        # ── Audio ──────────────────────────────────────────
-                        if response.data:
-                            await websocket.send_text(
-                                json.dumps(
-                                    {
-                                        "type": "audio",
-                                        "data": base64.b64encode(response.data).decode(),
-                                    }
-                                )
-                            )
+                            # ── Audio (via server_content parts only — avoids double-send) ──
+                            if response.server_content:
+                                sc = response.server_content
 
-                        # ── Server content (text transcript + turn signals) ─
-                        if response.server_content:
-                            sc = response.server_content
+                                if sc.model_turn:
+                                    audio_chunks = []
+                                    transcript_parts = []
+                                    for part in sc.model_turn.parts:
+                                        # Skip thought parts (internal reasoning)
+                                        if hasattr(part, 'thought') and part.thought:
+                                            continue
+                                        if part.inline_data and part.inline_data.data:
+                                            audio_chunks.append(part.inline_data.data)
+                                        elif part.text:
+                                            transcript_parts.append(part.text)
 
-                            if sc.model_turn:
-                                for part in sc.model_turn.parts:
-                                    if part.inline_data:
-                                        await websocket.send_text(
-                                            json.dumps(
-                                                {
-                                                    "type": "audio",
-                                                    "data": base64.b64encode(
-                                                        part.inline_data.data
-                                                    ).decode(),
-                                                }
-                                            )
-                                        )
-                                    if part.text:
-                                        await websocket.send_text(
-                                            json.dumps(
-                                                {
-                                                    "type": "transcript",
-                                                    "text": part.text,
-                                                    "speaker": "sally",
-                                                }
-                                            )
-                                        )
+                                    for chunk in audio_chunks:
+                                        await websocket.send_text(json.dumps({
+                                            "type": "audio",
+                                            "data": base64.b64encode(chunk).decode(),
+                                        }))
 
-                            if sc.turn_complete:
-                                await websocket.send_text(
-                                    json.dumps({"type": "turn_complete"})
-                                )
+                                    if transcript_parts:
+                                        await websocket.send_text(json.dumps({
+                                            "type": "transcript",
+                                            "text": " ".join(transcript_parts),
+                                            "speaker": "sally",
+                                        }))
 
-                        # ── Tool calls ────────────────────────────────────
-                        if response.tool_call:
-                            for fc in response.tool_call.function_calls:
-                                logger.info(f"Tool call: {fc.name}({fc.args})")
+                                if sc.turn_complete:
+                                    logger.info("Turn complete")
+                                    await websocket.send_text(json.dumps({"type": "turn_complete"}))
 
-                                # Notify browser so UI can show activity
-                                await websocket.send_text(
-                                    json.dumps(
-                                        {
-                                            "type": "tool_start",
-                                            "tool": fc.name,
-                                            "args": dict(fc.args),
-                                        }
-                                    )
-                                )
+                            # ── Fallback: raw audio data ───────────────────
+                            elif response.data:
+                                await websocket.send_text(json.dumps({
+                                    "type": "audio",
+                                    "data": base64.b64encode(response.data).decode(),
+                                }))
 
-                                result = await handle_tool_call(
-                                    fc.name, dict(fc.args), driver_id
-                                )
+                            # ── Tool calls ────────────────────────────────
+                            if response.tool_call:
+                                for fc in response.tool_call.function_calls:
+                                    logger.info(f"Tool call: {fc.name}({dict(fc.args)})")
 
-                                # Return result to Gemini
-                                await session.send_tool_response(
-                                    function_responses=[
-                                        types.FunctionResponse(
+                                    await websocket.send_text(json.dumps({
+                                        "type": "tool_start",
+                                        "tool": fc.name,
+                                        "args": dict(fc.args),
+                                    }))
+
+                                    result = await handle_tool_call(fc.name, dict(fc.args), driver_id)
+                                    logger.info(f"Tool result: {fc.name} → {result}")
+
+                                    await session.send_tool_response(
+                                        function_responses=[types.FunctionResponse(
                                             name=fc.name,
                                             id=fc.id,
                                             response=result,
-                                        )
-                                    ]
-                                )
-
-                                # Notify browser with result
-                                await websocket.send_text(
-                                    json.dumps(
-                                        {
-                                            "type": "tool_result",
-                                            "tool": fc.name,
-                                            "result": result,
-                                        }
+                                        )]
                                     )
-                                )
+
+                                    await websocket.send_text(json.dumps({
+                                        "type": "tool_result",
+                                        "tool": fc.name,
+                                        "result": result,
+                                    }))
+
+                        except Exception as inner_e:
+                            logger.error(f"Inner receive loop error: {inner_e}", exc_info=True)
 
                 except WebSocketDisconnect:
                     logger.info(f"Browser WS closed (send): driver={driver_id}")
                 except Exception as e:
-                    logger.error(f"send_to_browser error: {e}")
+                    logger.error(f"send_to_browser error: {e}", exc_info=True)
                     try:
-                        await websocket.send_text(
-                            json.dumps({"type": "error", "message": str(e)})
-                        )
+                        await websocket.send_text(json.dumps({"type": "error", "message": str(e)}))
                     except Exception:
                         pass
+                logger.info("send_to_browser exited")
 
             await asyncio.gather(
                 receive_from_browser(),
