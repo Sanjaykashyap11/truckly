@@ -1,0 +1,51 @@
+# Cloud Build — automated CI/CD for Truckly backend
+# Bonus points: Infrastructure-as-Code for hackathon submission
+
+substitutions:
+  _SERVICE_NAME: truckly-backend
+  _REGION: us-central1
+
+steps:
+  # Build Docker image
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - build
+      - -t
+      - "gcr.io/$PROJECT_ID/$_SERVICE_NAME:$COMMIT_SHA"
+      - -t
+      - "gcr.io/$PROJECT_ID/$_SERVICE_NAME:latest"
+      - ./backend
+    id: build
+
+  # Push to Container Registry
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - push
+      - "gcr.io/$PROJECT_ID/$_SERVICE_NAME:$COMMIT_SHA"
+    id: push
+    waitFor: [build]
+
+  # Deploy to Cloud Run
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - $_SERVICE_NAME
+      - --image=gcr.io/$PROJECT_ID/$_SERVICE_NAME:$COMMIT_SHA
+      - --platform=managed
+      - --region=$_REGION
+      - --allow-unauthenticated
+      - --port=8080
+      - --memory=1Gi
+      - --timeout=3600
+      - --set-env-vars=USE_VERTEX_AI=true,GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$_REGION
+    id: deploy
+    waitFor: [push]
+
+images:
+  - "gcr.io/$PROJECT_ID/$_SERVICE_NAME:$COMMIT_SHA"
+  - "gcr.io/$PROJECT_ID/$_SERVICE_NAME:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
