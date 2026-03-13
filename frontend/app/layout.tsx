@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Truckly — AI Fleet Co-Pilot",
+  title: "Trucky — AI Fleet Co-Pilot",
   description:
-    "Hands-free AI voice co-pilot for truck drivers. HOS compliance, truck-safe routing, fuel optimization, and breakdown response — all in one platform.",
+    "Hands-free AI voice co-pilot for truck drivers and dispatchers. Real-time Samsara ELD data, HOS compliance, truck-safe routing, fuel optimization, and breakdown response — all in one platform.",
 };
 
 export default function RootLayout({
