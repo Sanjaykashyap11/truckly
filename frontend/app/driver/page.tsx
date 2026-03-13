@@ -73,7 +73,9 @@ function DriverPageInner() {
   const [driverInfo, setDriverInfo] = useState<Record<string, unknown> | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);   // mic capture context
+  const playbackCtxRef = useRef<AudioContext | null>(null);    // Sally playback context (persistent)
+  const playbackTimeRef = useRef<number>(0);                   // running clock for gapless scheduling
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -96,42 +98,49 @@ function DriverPageInner() {
 
   // ─── Audio playback ──────────────────────────────────────────────────────
 
-  const playAudioQueue = useCallback(async () => {
-    if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
+  // Schedule one PCM16 chunk on the persistent playback context.
+  // Each chunk starts exactly when the previous one ends → no cracks.
+  const scheduleChunk = useCallback((pcmBuffer: ArrayBuffer) => {
+    const ctx = playbackCtxRef.current;
+    if (!ctx) return;
+
+    const pcm16 = new Int16Array(pcmBuffer);
+    const float32 = new Float32Array(pcm16.length);
+    for (let i = 0; i < pcm16.length; i++) {
+      float32[i] = pcm16[i] / 32768.0;
+    }
+
+    const audioBuffer = ctx.createBuffer(1, float32.length, 24000);
+    audioBuffer.getChannelData(0).set(float32);
+
+    const source = ctx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(ctx.destination);
+
+    // Start at the later of "right now" or "when the previous chunk ends"
+    const startAt = Math.max(ctx.currentTime + 0.02, playbackTimeRef.current);
+    source.start(startAt);
+    playbackTimeRef.current = startAt + audioBuffer.duration;
+
+    source.onended = () => {
+      // If nothing else is scheduled, mark Sally as done talking
+      if (playbackTimeRef.current <= ctx.currentTime + 0.05) {
+        setIsSallyTalking(false);
+        isPlayingRef.current = false;
+      }
+    };
+  }, []);
+
+  const playAudioQueue = useCallback(() => {
+    if (audioQueueRef.current.length === 0) return;
     isPlayingRef.current = true;
     setIsSallyTalking(true);
 
     while (audioQueueRef.current.length > 0) {
-      const buffer = audioQueueRef.current.shift()!;
-      try {
-        // Use a dedicated 24kHz context for Gemini output (independent of mic context)
-        const ctx = new AudioContext({ sampleRate: 24000 });
-
-        // Gemini Live API outputs PCM16 at 24kHz
-        const pcm16 = new Int16Array(buffer);
-        const float32 = new Float32Array(pcm16.length);
-        for (let i = 0; i < pcm16.length; i++) {
-          float32[i] = pcm16[i] / 32768.0;
-        }
-
-        const audioBuffer = ctx.createBuffer(1, float32.length, 24000);
-        audioBuffer.getChannelData(0).set(float32);
-
-        await new Promise<void>((resolve) => {
-          const source = ctx.createBufferSource();
-          source.buffer = audioBuffer;
-          source.connect(ctx.destination);
-          source.onended = () => { ctx.close(); resolve(); };
-          source.start();
-        });
-      } catch (e) {
-        console.error("Audio playback error:", e);
-      }
+      const buf = audioQueueRef.current.shift()!;
+      scheduleChunk(buf);
     }
-
-    isPlayingRef.current = false;
-    setIsSallyTalking(false);
-  }, []);
+  }, [scheduleChunk]);
 
   // ─── WebSocket connection ────────────────────────────────────────────────
 
@@ -141,8 +150,11 @@ function DriverPageInner() {
     setConnectionStatus("connecting");
     setError(null);
 
-    // Init audio context at native rate — we resample manually to 16kHz
+    // Mic capture context at native rate (we resample to 16kHz before sending)
     audioContextRef.current = new AudioContext();
+    // Persistent 24kHz playback context for gapless Sally audio
+    playbackCtxRef.current = new AudioContext({ sampleRate: 24000 });
+    playbackTimeRef.current = 0;
 
     const ws = new WebSocket(`${WS_URL}/ws/voice/${driverId}`);
     wsRef.current = ws;
@@ -218,7 +230,8 @@ function DriverPageInner() {
           }
 
           case "turn_complete":
-            setIsSallyTalking(false);
+            // Let scheduled audio finish; clock resets naturally
+            playbackTimeRef.current = 0;
             break;
 
           case "error":
@@ -237,6 +250,9 @@ function DriverPageInner() {
     wsRef.current = null;
     audioContextRef.current?.close();
     audioContextRef.current = null;
+    playbackCtxRef.current?.close();
+    playbackCtxRef.current = null;
+    playbackTimeRef.current = 0;
   }, []);
 
   // ─── Microphone ──────────────────────────────────────────────────────────
@@ -260,6 +276,10 @@ function DriverPageInner() {
 
       const ctx = audioContextRef.current;
       if (ctx.state === "suspended") await ctx.resume();
+      // Also resume playback context (browser may suspend it until user gesture)
+      if (playbackCtxRef.current?.state === "suspended") {
+        await playbackCtxRef.current.resume();
+      }
 
       const source = ctx.createMediaStreamSource(stream);
       sourceRef.current = source;
