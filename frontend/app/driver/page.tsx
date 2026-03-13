@@ -584,9 +584,10 @@ function DriverPageInner() {
                         )}
                       </div>
                       <span className="text-xs text-muted-foreground shrink-0">
-                        {activity.timestamp.toLocaleTimeString([], {
+                        {activity.timestamp.toLocaleTimeString("en-US", {
                           hour: "2-digit",
                           minute: "2-digit",
+                          hour12: false,
                         })}
                       </span>
                     </div>

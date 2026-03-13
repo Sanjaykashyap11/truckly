@@ -7,7 +7,7 @@ import logging
 import os
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -46,7 +46,7 @@ if USE_VERTEX:
 else:
     client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-live-001")
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-exp")
 
 
 # ─── System prompt ────────────────────────────────────────────────────────────
