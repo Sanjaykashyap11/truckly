@@ -164,12 +164,24 @@ function DriverPageInner() {
       setConnectionStatus("connected");
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       setIsConnected(false);
       setIsListening(false);
       setIsSallyTalking(false);
-      setConnectionStatus("idle");
       stopMic();
+      // Auto-reconnect on transient Gemini server errors (1011)
+      if (event.code === 1011 || event.code === 1006) {
+        setConnectionStatus("connecting");
+        setTranscripts(prev => [...prev, {
+          id: Date.now().toString(),
+          speaker: "sally" as const,
+          text: "Connection lost — reconnecting...",
+          timestamp: new Date(),
+        }]);
+        setTimeout(() => connect(), 3000);
+      } else {
+        setConnectionStatus("idle");
+      }
     };
 
     ws.onerror = () => {
@@ -236,6 +248,10 @@ function DriverPageInner() {
 
           case "error":
             setError(msg.message);
+            break;
+
+          case "reconnect_needed":
+            // Will be handled by onclose
             break;
         }
       } catch (e) {
