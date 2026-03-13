@@ -280,9 +280,10 @@ export default function DispatcherDashboard() {
                         </p>
                         <div className="flex items-center gap-2 mt-2">
                           <span className="text-xs text-muted-foreground">
-                            {new Date(alert.timestamp).toLocaleTimeString([], {
+                            {new Date(alert.timestamp).toLocaleTimeString("en-US", {
                               hour: "2-digit",
                               minute: "2-digit",
+                              hour12: false,
                             })}
                           </span>
                           {alert.auto_resolved && (
