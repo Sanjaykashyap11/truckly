@@ -104,8 +104,8 @@ function DriverPageInner() {
     while (audioQueueRef.current.length > 0) {
       const buffer = audioQueueRef.current.shift()!;
       try {
-        const ctx = audioContextRef.current;
-        if (!ctx) break;
+        // Use a dedicated 24kHz context for Gemini output (independent of mic context)
+        const ctx = new AudioContext({ sampleRate: 24000 });
 
         // Gemini Live API outputs PCM16 at 24kHz
         const pcm16 = new Int16Array(buffer);
@@ -121,7 +121,7 @@ function DriverPageInner() {
           const source = ctx.createBufferSource();
           source.buffer = audioBuffer;
           source.connect(ctx.destination);
-          source.onended = () => resolve();
+          source.onended = () => { ctx.close(); resolve(); };
           source.start();
         });
       } catch (e) {
@@ -141,8 +141,8 @@ function DriverPageInner() {
     setConnectionStatus("connecting");
     setError(null);
 
-    // Init audio context
-    audioContextRef.current = new AudioContext({ sampleRate: 16000 });
+    // Init audio context at native rate — we resample manually to 16kHz
+    audioContextRef.current = new AudioContext();
 
     const ws = new WebSocket(`${WS_URL}/ws/voice/${driverId}`);
     wsRef.current = ws;
@@ -264,17 +264,33 @@ function DriverPageInner() {
       const source = ctx.createMediaStreamSource(stream);
       sourceRef.current = source;
 
-      // ScriptProcessor captures raw PCM at 16kHz
+      // Capture at native rate then resample to 16kHz for Gemini
+      const TARGET_RATE = 16000;
+      const nativeRate = ctx.sampleRate; // typically 44100 or 48000
       const processor = ctx.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
 
       processor.onaudioprocess = (e) => {
         if (wsRef.current?.readyState !== WebSocket.OPEN) return;
         const float32 = e.inputBuffer.getChannelData(0);
-        const int16 = new Int16Array(float32.length);
-        for (let i = 0; i < float32.length; i++) {
-          int16[i] = Math.max(-32768, Math.min(32767, float32[i] * 32768));
+
+        // Downsample from nativeRate → 16kHz via linear interpolation
+        const ratio = nativeRate / TARGET_RATE;
+        const outputLen = Math.round(float32.length / ratio);
+        const resampled = new Float32Array(outputLen);
+        for (let i = 0; i < outputLen; i++) {
+          const src = i * ratio;
+          const lo = Math.floor(src);
+          const hi = Math.min(lo + 1, float32.length - 1);
+          resampled[i] = float32[lo] + (float32[hi] - float32[lo]) * (src - lo);
         }
+
+        // Convert to Int16 PCM
+        const int16 = new Int16Array(outputLen);
+        for (let i = 0; i < outputLen; i++) {
+          int16[i] = Math.max(-32768, Math.min(32767, resampled[i] * 32768));
+        }
+
         const binary = String.fromCharCode(...new Uint8Array(int16.buffer));
         wsRef.current.send(
           JSON.stringify({ type: "audio", data: btoa(binary) })
