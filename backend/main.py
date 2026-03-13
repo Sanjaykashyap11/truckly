@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import os
+from datetime import datetime
 
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
@@ -32,6 +33,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─── Dispatcher broadcast ─────────────────────────────────────────────────────
+dispatcher_connections: set[WebSocket] = set()
+
+async def broadcast(message: dict):
+    dead = set()
+    for ws in dispatcher_connections:
+        try:
+            await ws.send_text(json.dumps(message))
+        except Exception:
+            dead.add(ws)
+    dispatcher_connections.difference_update(dead)
 
 # ─── Gemini client ────────────────────────────────────────────────────────────
 
@@ -127,6 +140,27 @@ async def acknowledge_alert(alert_id: str):
             alert["acknowledged"] = True
             return {"success": True}
     return {"success": False, "error": "Alert not found"}
+
+
+@app.websocket("/ws/dispatcher")
+async def dispatcher_websocket(websocket: WebSocket):
+    await websocket.accept()
+    dispatcher_connections.add(websocket)
+    try:
+        await websocket.send_text(json.dumps({
+            "type": "init",
+            "drivers": list(MOCK_DRIVERS.values()),
+            "alerts": MOCK_ALERTS,
+        }))
+        while True:
+            try:
+                msg = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+            except asyncio.TimeoutError:
+                await websocket.send_text(json.dumps({"type": "ping"}))
+    except Exception:
+        pass
+    finally:
+        dispatcher_connections.discard(websocket)
 
 
 # ─── WebSocket voice bridge ───────────────────────────────────────────────────
@@ -269,6 +303,23 @@ async def voice_websocket(websocket: WebSocket, driver_id: str):
                                         "result": result,
                                     }))
 
+                                    await broadcast({"type": "tool_activity", "driver_id": driver_id, "tool": fc.name, "result": result})
+
+                                    if fc.name == "handle_breakdown":
+                                        new_alert = {
+                                            "id": f"A{len(MOCK_ALERTS)+1:03d}",
+                                            "driver_id": driver_id,
+                                            "driver_name": MOCK_DRIVERS.get(driver_id, {}).get("name", "Driver"),
+                                            "type": "BREAKDOWN",
+                                            "severity": "HIGH",
+                                            "message": f"Breakdown reported. Sally activated emergency protocol. Mechanics contacted.",
+                                            "timestamp": datetime.now().isoformat(),
+                                            "acknowledged": False,
+                                            "auto_resolved": False,
+                                        }
+                                        MOCK_ALERTS.append(new_alert)
+                                        await broadcast({"type": "new_alert", "alert": new_alert})
+
                         except Exception as inner_e:
                             logger.error(f"Inner receive loop error: {inner_e}", exc_info=True)
 
@@ -278,6 +329,10 @@ async def voice_websocket(websocket: WebSocket, driver_id: str):
                     logger.error(f"send_to_browser error: {e}", exc_info=True)
                     try:
                         await websocket.send_text(json.dumps({"type": "error", "message": str(e)}))
+                    except Exception:
+                        pass
+                    try:
+                        await websocket.send_text(json.dumps({"type": "reconnect_needed"}))
                     except Exception:
                         pass
                 logger.info("send_to_browser exited")
