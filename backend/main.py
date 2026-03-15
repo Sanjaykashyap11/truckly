@@ -6,6 +6,8 @@ import base64
 import json
 import logging
 import os
+import re
+import uuid
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -17,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from google.genai import types
 
+import httpx
 from mock_data import MOCK_ALERTS, MOCK_DRIVERS
 from tools import get_tools, get_dispatcher_tools, handle_tool_call, handle_dispatcher_tool_call
 import samsara as samsara_module
@@ -40,6 +43,7 @@ app.add_middleware(
 # ─── Live driver state (Samsara-powered, falls back to mock) ──────────────────
 
 ACTIVE_DRIVERS: dict = dict(MOCK_DRIVERS)  # starts as mock; replaced by Samsara data
+LOADS: list = []  # In-memory load board
 
 async def sync_from_samsara():
     """Fetch live fleet data from Samsara ELD and update ACTIVE_DRIVERS"""
@@ -199,8 +203,12 @@ def get_dispatcher_system_prompt() -> str:
         status = d.get("status", "unknown")
         loc = d.get("current_location", {}).get("address", "unknown")
         speed = d.get("current_location", {}).get("speed_mph", 0)
+        tel = d.get("telemetry") or {}
+        fuel = tel.get("fuel_percent")
+        eng = tel.get("engine_state", "Unknown")
+        fuel_str = f"{fuel}%" if fuel is not None else "N/A"
         fleet_summary.append(
-            f"  • {d['name']} | {d.get('truck', 'N/A')} | {status} | {loc} | {speed} mph | HOS: {h}h {m}min"
+            f"  • {d['name']} | {d.get('truck', 'N/A')} | {status} | {loc} | {speed} mph | HOS: {h}h {m}min | Fuel: {fuel_str} | Engine: {eng}"
         )
         if mins < 60 and status in ("on_route", "driving"):
             violations.append(f"  ⚠ {d['name']}: {h}h {m}min HOS remaining — needs break soon")
@@ -220,18 +228,21 @@ YOUR ROLE:
 You are the dispatcher's command center. Answer fleet questions instantly, flag issues proactively, and coordinate responses — all via voice.
 
 CAPABILITIES:
-- Real-time driver locations and HOS status (from Samsara ELD)
-- Proactive HOS violation warnings
+- Real-time driver locations, HOS, fuel %, engine state, odometer (from Samsara ELD)
+- Proactive HOS violation warnings and fuel low alerts
 - Route safety validation for any truck
+- FMCSA-compliant trip planning and driver ranking via plan_delivery
 - Automated stakeholder notifications (delay, breakdown, ETA updates)
 - Fleet-wide command and coordination
 
 RULES:
-1. Always call get_fleet_status to get the freshest data before answering fleet questions
-2. Proactively flag any driver with < 1 hour HOS remaining
-3. For breakdown situations, activate emergency protocol immediately
-4. Keep responses concise but informative — dispatcher needs fast answers
-5. Always mention data source (Samsara live vs demo)
+1. Always call get_fleet_status or get_driver_details to get FRESH data — never guess
+2. FUEL DATA IS LIVE — fuel_percent and engine_state are real Samsara telemetry. Always share them when asked
+3. Proactively flag any driver with < 1 hour HOS remaining
+4. For breakdown situations, activate emergency protocol immediately
+5. Keep responses concise but informative — dispatcher needs fast answers
+6. Always mention data source (Samsara live vs demo)
+7. When asked "who can make this delivery" — use plan_delivery tool with destination and distance_miles
 
 PERSONALITY: Sharp, professional operations center. Efficient. Proactive. Never guess — always use tools.
 Open with: "Trucky dispatch ready. I have {len(drivers)} drivers on live Samsara ELD. What do you need?"
@@ -381,6 +392,183 @@ async def api_available_drivers():
         "drivers": available,
         "timestamp": datetime.now().isoformat(),
     }
+
+
+# ─── Loads / Rate Con CRUD ────────────────────────────────────────────────────
+
+
+@app.get("/api/loads")
+async def get_loads_list():
+    return LOADS
+
+
+@app.post("/api/loads")
+async def create_load(body: dict):
+    load_id = f"TRK-{datetime.now().year}-{str(uuid.uuid4())[:4].upper()}"
+    load = {
+        "id": load_id,
+        "created_at": datetime.now().isoformat(),
+        "status": body.get("status", "PENDING"),
+        "origin": body.get("origin", ""),
+        "destination": body.get("destination", ""),
+        "pickup_date": body.get("pickup_date", ""),
+        "pickup_time": body.get("pickup_time", "08:00"),
+        "pickup_contact": body.get("pickup_contact", ""),
+        "pickup_phone": body.get("pickup_phone", ""),
+        "delivery_date": body.get("delivery_date", ""),
+        "delivery_time": body.get("delivery_time", "17:00"),
+        "delivery_contact": body.get("delivery_contact", ""),
+        "delivery_phone": body.get("delivery_phone", ""),
+        "commodity": body.get("commodity", "General Freight"),
+        "weight_lbs": body.get("weight_lbs", 0),
+        "distance_miles": body.get("distance_miles", 0),
+        "rate": body.get("rate", 0),
+        "fuel_surcharge": body.get("fuel_surcharge", 0),
+        "driver_id": body.get("driver_id", ""),
+        "driver_name": body.get("driver_name", "Unassigned"),
+        "truck": body.get("truck", ""),
+        "broker_name": body.get("broker_name", ""),
+        "broker_mc": body.get("broker_mc", ""),
+        "special_instructions": body.get("special_instructions", ""),
+        "po_number": body.get("po_number", ""),
+        "reference_number": body.get("reference_number", ""),
+    }
+    LOADS.append(load)
+    return load
+
+
+@app.put("/api/loads/{load_id}")
+async def update_load(load_id: str, body: dict):
+    for i, load in enumerate(LOADS):
+        if load["id"] == load_id:
+            LOADS[i] = {**load, **body, "id": load_id}
+            return LOADS[i]
+    return {"error": "Load not found"}
+
+
+@app.delete("/api/loads/{load_id}")
+async def delete_load(load_id: str):
+    global LOADS
+    LOADS = [l for l in LOADS if l["id"] != load_id]
+    return {"success": True}
+
+
+# ─── Distance calculation (OSRM + Nominatim — no API key) ─────────────────────
+
+
+@app.post("/api/distance")
+async def api_distance(body: dict):
+    origin = body.get("origin", "").strip()
+    dest = body.get("destination", "").strip()
+    if not dest:
+        return {"error": "Destination required"}
+    nom_headers = {"User-Agent": "TruckyTMS/2.0 (fleet management; contact@trucky.ai)"}
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as hc:
+            # Geocode destination
+            r2 = await hc.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": dest, "format": "json", "limit": 1},
+                headers=nom_headers,
+            )
+            locs2 = r2.json()
+            if not locs2:
+                return {"error": f"Could not geocode: {dest}"}
+            lat2, lng2 = float(locs2[0]["lat"]), float(locs2[0]["lon"])
+            dest_display = locs2[0].get("display_name", dest)
+
+            if origin:
+                await asyncio.sleep(1.1)  # Nominatim rate limit: 1 req/sec
+                r1 = await hc.get(
+                    "https://nominatim.openstreetmap.org/search",
+                    params={"q": origin, "format": "json", "limit": 1},
+                    headers=nom_headers,
+                )
+                locs1 = r1.json()
+                if not locs1:
+                    return {"error": f"Could not geocode origin: {origin}"}
+                lat1, lng1 = float(locs1[0]["lat"]), float(locs1[0]["lon"])
+            else:
+                # Use fleet centroid
+                active = [d for d in ACTIVE_DRIVERS.values() if d.get("current_location", {}).get("lat")]
+                if active:
+                    lat1 = sum(d["current_location"]["lat"] for d in active) / len(active)
+                    lng1 = sum(d["current_location"]["lng"] for d in active) / len(active)
+                else:
+                    lat1, lng1 = 40.7128, -74.0060  # NYC default
+
+            # OSRM open routing (no key needed)
+            r3 = await hc.get(
+                f"http://router.project-osrm.org/route/v1/driving/{lng1},{lat1};{lng2},{lat2}",
+                params={"overview": "false"},
+            )
+            data = r3.json()
+            if data.get("code") == "Ok":
+                route = data["routes"][0]
+                dist_miles = round(route["distance"] * 0.000621371, 1)
+                dur_secs = route["duration"]
+                dur_h = int(dur_secs // 3600)
+                dur_m = int((dur_secs % 3600) // 60)
+                return {
+                    "origin": origin or "Fleet centroid",
+                    "destination": dest_display,
+                    "distance_miles": dist_miles,
+                    "duration_hours": round(dur_secs / 3600, 2),
+                    "duration_display": f"{dur_h}h {dur_m}m",
+                    "origin_coords": {"lat": lat1, "lng": lng1},
+                    "destination_coords": {"lat": lat2, "lng": lng2},
+                }
+            return {"error": "Routing service unavailable", "code": data.get("code")}
+    except Exception as e:
+        logger.error(f"Distance API error: {e}")
+        return {"error": str(e)}
+
+
+# ─── FMCSA SAFER carrier lookup ────────────────────────────────────────────────
+
+
+@app.post("/api/safer")
+async def safer_lookup(body: dict):
+    dot_number = str(body.get("dot_number", "")).strip().lstrip("0") or ""
+    if not dot_number:
+        return {"error": "DOT number required"}
+    safer_url = (
+        f"https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY"
+        f"&query_type=queryCarrierSnapshot&query_param=USDOT&query_string={dot_number}"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as hc:
+            r = await hc.get(
+                safer_url,
+                headers={"User-Agent": "Mozilla/5.0 TruckyTMS"},
+                follow_redirects=True,
+            )
+            html = r.text
+
+            def ex(pattern: str) -> str:
+                m = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
+                if m:
+                    raw = re.sub(r"<[^>]+>", "", m.group(1)).strip().replace("&nbsp;", "").strip()
+                    return raw if raw else "N/A"
+                return "N/A"
+
+            return {
+                "dot_number": dot_number,
+                "legal_name": ex(r"Legal Name[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
+                "dba_name": ex(r"DBA Name[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
+                "physical_address": ex(r"Physical Address[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
+                "phone": ex(r"Phone[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
+                "operating_status": ex(r"Operating Status[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
+                "safety_rating": ex(r"Safety Rating[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
+                "carrier_operation": ex(r"Carrier Operation[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
+                "mcs_150_date": ex(r"MCS-150[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
+                "power_units": ex(r"Power Units[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
+                "drivers": ex(r"Drivers[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
+                "safer_url": safer_url,
+            }
+    except Exception as e:
+        logger.error(f"SAFER lookup error: {e}")
+        return {"error": str(e), "safer_url": safer_url}
 
 
 # ─── Dispatcher data WebSocket ────────────────────────────────────────────────

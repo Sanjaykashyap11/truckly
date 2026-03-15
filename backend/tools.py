@@ -598,6 +598,7 @@ async def get_fleet_status(args: Dict, active_drivers: dict) -> Dict:
         speed = d.get("current_location", {}).get("speed_mph", 0)
         eld_status = hos.get("status", "unknown")
 
+        tel = d.get("telemetry") or {}
         summary = {
             "name": d.get("name"),
             "truck": d.get("truck"),
@@ -608,6 +609,9 @@ async def get_fleet_status(args: Dict, active_drivers: dict) -> Dict:
             "hos_remaining": f"{h}h {m}min",
             "hos_remaining_mins": mins,
             "compliance": "COMPLIANT" if mins > 30 else ("WARNING" if mins > 0 else "VIOLATION"),
+            "fuel_percent": tel.get("fuel_percent"),
+            "engine_state": tel.get("engine_state", "Unknown"),
+            "odometer_miles": tel.get("odometer_miles"),
         }
         summaries.append(summary)
 
@@ -659,6 +663,12 @@ async def get_driver_details(args: Dict, active_drivers: dict) -> Dict:
                 },
                 "phone": d.get("phone"),
                 "data_source": "Samsara ELD (live)" if d.get("source") == "samsara_live" else "demo",
+                "telemetry": {
+                    "fuel_percent": (d.get("telemetry") or {}).get("fuel_percent"),
+                    "engine_state": (d.get("telemetry") or {}).get("engine_state", "Unknown"),
+                    "odometer_miles": (d.get("telemetry") or {}).get("odometer_miles"),
+                    "fuel_note": "Live from Samsara ELD" if d.get("source") == "samsara_live" else "demo",
+                },
             }
 
     return {"found": False, "error": f"No driver matching '{args.get('driver_name')}' found in fleet"}
