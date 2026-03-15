@@ -3,58 +3,41 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  Truck,
-  AlertTriangle,
-  CheckCircle,
-  Clock,
-  Radio,
-  Activity,
-  Shield,
-  Fuel,
-  Wrench,
-  MapPin,
-  Bell,
-  BellOff,
-  Navigation,
-  Zap,
-  Mic,
-  MicOff,
-  X,
-  Wifi,
-  WifiOff,
-  Database,
+  Truck, AlertTriangle, CheckCircle, Clock, Radio, Activity,
+  Shield, Fuel, Wrench, MapPin, Bell, BellOff, Navigation, Zap,
+  Mic, MicOff, X, Database, ChevronDown, ChevronUp, Search,
+  TrendingUp, Package, RefreshCw, AlertCircle, Timer, Filter,
+  ArrowRight, BarChart3, Gauge, Power,
 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8080";
+const WS_URL  = process.env.NEXT_PUBLIC_WS_URL  || "ws://localhost:8080";
 
-const DISPATCHER_SCENARIOS = [
-  { label: "Fleet Status", text: "Give me a full fleet status update." },
-  { label: "HOS Warnings", text: "Which drivers are running low on hours?" },
-  { label: "On Route", text: "How many trucks are currently on route?" },
-  { label: "Violations", text: "Are there any HOS violations right now?" },
-  { label: "Notify All", text: "Send a weather delay alert to all active drivers." },
-];
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface HOS {
   drive_time_remaining_mins: number;
+  on_duty_remaining_mins: number;
+  cycle_remaining_hours: number;
   status: string;
-  next_mandatory_break?: string;
-  break_location?: string;
+  break_due_in_mins: number;
+  violation: boolean;
 }
-
+interface Telemetry {
+  fuel_percent: number | null;
+  engine_state: string;
+  odometer_miles: number | null;
+}
 interface Driver {
   id: string;
   name: string;
   truck: string;
   status: string;
-  current_location: { address: string; speed_mph?: number };
-  destination?: { address: string };
+  current_location: { address: string; speed_mph: number; heading: number; lat: number; lng: number };
   hos: HOS;
-  route?: { highway: string; eta: string; violations: string[]; restricted_roads_avoided?: string[] };
+  telemetry?: Telemetry;
   source?: string;
 }
-
 interface Alert {
   id: string;
   driver_id: string;
@@ -66,68 +49,384 @@ interface Alert {
   acknowledged: boolean;
   auto_resolved: boolean;
 }
-
-interface ToolActivity {
-  id: string;
-  session_id: string;
-  is_dispatcher?: boolean;
-  tool: string;
-  result: Record<string, unknown>;
-  timestamp: Date;
+interface Insight {
+  type: "critical" | "warning" | "info" | "success";
+  icon: string;
+  title: string;
+  body: string;
+  drivers: string[];
 }
-
-interface Transcript {
-  id: string;
-  speaker: "dispatcher" | "trucky";
-  text: string;
-  timestamp: Date;
+interface TripPlanResult {
+  rank: number;
+  driver_id: string;
+  driver_name: string;
+  truck: string;
+  status: string;
+  location: string;
+  speed_mph: number;
+  hos_drive_rem: number;
+  hos_shift_rem: number;
+  plan: {
+    can_deliver: boolean;
+    scenario: string;
+    scenario_label: string;
+    compliance: string;
+    earliest_display: string;
+    drive_time_label: string;
+    rest_required: boolean;
+    break_required: boolean;
+    explanation: string;
+    warnings: string[];
+    timeline: { event: string; at_mins: number; duration_mins: number | null }[];
+  };
+  meets_deadline: boolean | null;
 }
+interface ToolActivity { id: string; session_id: string; is_dispatcher?: boolean; tool: string; result: Record<string, unknown>; timestamp: Date; }
+interface Transcript   { id: string; speaker: "dispatcher" | "trucky"; text: string; timestamp: Date; }
 
-const TOOL_META: Record<string, { label: string; icon: React.ComponentType<{ className?: string }>; color: string }> = {
-  check_hos_status:    { label: "HOS Check",           icon: Clock,     color: "text-blue-400" },
-  check_route_safety:  { label: "Route Safety",         icon: Shield,    color: "text-yellow-400" },
-  find_fuel_stops:     { label: "Fuel Stop",            icon: Fuel,      color: "text-green-400" },
-  handle_breakdown:    { label: "Breakdown Protocol",   icon: Wrench,    color: "text-red-400" },
-  notify_stakeholders: { label: "Stakeholders Notified",icon: Radio,     color: "text-purple-400" },
-  get_fleet_status:    { label: "Fleet Status",         icon: Truck,     color: "text-cyan-400" },
-  get_driver_details:  { label: "Driver Details",       icon: Activity,  color: "text-indigo-400" },
-};
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const STATUS_DOT: Record<string, string> = {
-  on_route:  "bg-green-400",
-  loading:   "bg-yellow-400",
+  on_route: "bg-green-400 shadow-green-400/50 shadow-sm",
+  loading:  "bg-yellow-400",
   at_shipper:"bg-yellow-400",
-  resting:   "bg-gray-500",
-  off_duty:  "bg-gray-600",
-  unknown:   "bg-gray-600",
+  resting:  "bg-slate-500",
+  unknown:  "bg-slate-600",
 };
-
 const STATUS_LABEL: Record<string, string> = {
-  on_route:  "On Route",
-  loading:   "Loading",
-  at_shipper:"At Shipper",
-  resting:   "Resting",
-  off_duty:  "Off Duty",
-  unknown:   "Unknown",
+  on_route: "On Route", loading: "Loading", at_shipper: "At Shipper", resting: "Resting", unknown: "Unknown",
 };
+const COMPLIANCE_COLOR: Record<string, string> = {
+  COMPLIANT:           "text-green-400 bg-green-400/10 border-green-400/30",
+  NEEDS_REST:          "text-yellow-400 bg-yellow-400/10 border-yellow-400/30",
+  AVAILABLE_AFTER_REST:"text-blue-400 bg-blue-400/10 border-blue-400/30",
+  NEEDS_RESTART:       "text-orange-400 bg-orange-400/10 border-orange-400/30",
+  CANNOT_ASSIGN:       "text-red-400 bg-red-400/10 border-red-400/30",
+};
+const INSIGHT_COLORS: Record<string, string> = {
+  critical: "border-l-red-500 bg-red-500/5",
+  warning:  "border-l-yellow-500 bg-yellow-500/5",
+  info:     "border-l-blue-500 bg-blue-500/5",
+  success:  "border-l-green-500 bg-green-500/5",
+};
+const DISPATCHER_SCENARIOS = [
+  { label: "Fleet Status",   text: "Give me a full fleet status update right now." },
+  { label: "Available Now",  text: "Which drivers are available for a new load right now?" },
+  { label: "HOS Warnings",   text: "Which drivers are running low on hours?" },
+  { label: "Plan Load",      text: "Who can deliver to Boston, 250 miles, by tomorrow 5PM?" },
+  { label: "Violations",     text: "Any HOS violations or compliance issues right now?" },
+  { label: "Fuel Alert",     text: "Which trucks need fuel? Anyone below 25%?" },
+];
 
-function HOSBar({ mins }: { mins: number }) {
-  const max = 660;
-  const pct = Math.min(100, Math.max(0, (mins / max) * 100));
-  const color = mins < 60 ? "bg-red-500" : mins < 180 ? "bg-yellow-500" : "bg-green-500";
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
+// ─── Sub-components ────────────────────────────────────────────────────────────
+
+function HOSMiniBar({ label, mins, maxMins, warn, danger }: { label: string; mins: number; maxMins: number; warn: number; danger: number }) {
+  const pct = Math.min(100, (mins / maxMins) * 100);
+  const color = mins < danger ? "bg-red-500" : mins < warn ? "bg-yellow-500" : "bg-emerald-500";
+  const h = Math.floor(mins / 60); const m = mins % 60;
   return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-xs">
-        <span className="text-muted-foreground">HOS Remaining</span>
-        <span className={`font-mono font-medium ${mins < 60 ? "text-red-400" : mins < 180 ? "text-yellow-400" : "text-green-400"}`}>
-          {h}h {m}min
-        </span>
+    <div className="space-y-0.5">
+      <div className="flex justify-between text-[10px]">
+        <span className="text-slate-500">{label}</span>
+        <span className={`font-mono ${mins < danger ? "text-red-400" : mins < warn ? "text-yellow-400" : "text-slate-300"}`}>{h}h {m}m</span>
       </div>
-      <div className="h-2 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${pct}%` }} />
+      <div className="h-1 bg-slate-700 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
       </div>
+    </div>
+  );
+}
+
+function FuelBar({ pct }: { pct: number }) {
+  const color = pct < 15 ? "bg-red-500" : pct < 30 ? "bg-yellow-500" : "bg-emerald-500";
+  return (
+    <div className="flex items-center gap-1.5">
+      <Fuel className="w-3 h-3 text-slate-500" />
+      <div className="flex-1 h-1 bg-slate-700 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className={`text-[10px] font-mono ${pct < 15 ? "text-red-400" : pct < 30 ? "text-yellow-400" : "text-slate-400"}`}>{pct}%</span>
+    </div>
+  );
+}
+
+function DriverCard({ driver, onPlanLoad }: { driver: Driver; onPlanLoad: (d: Driver) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const hos  = driver.hos;
+  const tel  = driver.telemetry;
+  const loc  = driver.current_location;
+  const isViolation = hos.violation;
+  const isLowHOS = hos.drive_time_remaining_mins < 120 && hos.drive_time_remaining_mins > 0;
+  const isBreakSoon = 0 < hos.break_due_in_mins && hos.break_due_in_mins < 30 && driver.status === "on_route";
+
+  return (
+    <div className={`bg-slate-900 border rounded-xl overflow-hidden transition-colors ${
+      isViolation ? "border-red-500/50" : isLowHOS ? "border-yellow-500/30" : "border-slate-700/60 hover:border-slate-600"
+    }`}>
+      {/* Compact row */}
+      <div className="px-4 py-3">
+        <div className="flex items-start gap-3">
+          {/* Status + Name */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[driver.status] || "bg-slate-500"}`} />
+              <span className="font-semibold text-sm text-white truncate">{driver.name}</span>
+              <span className="text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">{STATUS_LABEL[driver.status] || driver.status}</span>
+              {isViolation && <span className="text-[10px] text-red-400 bg-red-400/10 border border-red-400/30 px-1.5 py-0.5 rounded font-medium">HOS VIOLATION</span>}
+              {isBreakSoon && <span className="text-[10px] text-yellow-400 bg-yellow-400/10 border border-yellow-400/30 px-1.5 py-0.5 rounded">BREAK DUE</span>}
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5 truncate">{driver.truck}</p>
+          </div>
+
+          {/* Engine + Fuel inline */}
+          <div className="flex items-center gap-2 shrink-0">
+            {tel?.engine_state && (
+              <div className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border ${tel.engine_state === "On" ? "text-green-400 bg-green-400/10 border-green-400/20" : "text-slate-500 bg-slate-800 border-slate-700"}`}>
+                <Power className="w-2.5 h-2.5" />
+                {tel.engine_state}
+              </div>
+            )}
+            {tel?.fuel_percent != null && (
+              <div className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${tel.fuel_percent < 25 ? "text-red-400 bg-red-400/10 border-red-400/20" : "text-slate-400 bg-slate-800 border-slate-700"}`}>
+                <Fuel className="w-2.5 h-2.5 inline mr-0.5" />{tel.fuel_percent}%
+              </div>
+            )}
+            <button onClick={() => setExpanded(e => !e)} className="text-slate-500 hover:text-slate-300">
+              {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+        </div>
+
+        {/* Location + Speed */}
+        <div className="mt-2 flex items-center gap-3 text-xs text-slate-500">
+          <span className="flex items-center gap-1 truncate"><MapPin className="w-3 h-3 shrink-0" />{loc.address || "Location unavailable"}</span>
+          {loc.speed_mph > 0 && <span className="shrink-0 font-mono text-slate-400">{loc.speed_mph} mph</span>}
+        </div>
+
+        {/* HOS bars */}
+        <div className="mt-2.5 space-y-1.5">
+          <HOSMiniBar label="Drive" mins={hos.drive_time_remaining_mins} maxMins={660} warn={180} danger={60} />
+          <HOSMiniBar label="Shift" mins={hos.on_duty_remaining_mins}    maxMins={840} warn={240} danger={60} />
+        </div>
+      </div>
+
+      {/* Expanded detail */}
+      {expanded && (
+        <div className="border-t border-slate-700/60 px-4 py-3 space-y-3 bg-slate-900/50">
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-1">70-Hr Cycle</p>
+              <p className="text-white font-mono">{hos.cycle_remaining_hours}h remaining</p>
+            </div>
+            <div>
+              <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-1">Next Break Due</p>
+              <p className={`font-mono ${hos.break_due_in_mins < 60 ? "text-yellow-400" : "text-white"}`}>
+                {hos.break_due_in_mins > 0 ? `In ${Math.floor(hos.break_due_in_mins/60)}h ${hos.break_due_in_mins%60}m` : "Break needed now"}
+              </p>
+            </div>
+            {tel?.odometer_miles != null && (
+              <div>
+                <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-1">Odometer</p>
+                <p className="text-white font-mono">{tel.odometer_miles.toLocaleString()} mi</p>
+              </div>
+            )}
+            <div>
+              <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-1">ELD Status</p>
+              <p className="text-slate-300 font-mono text-[11px]">{hos.status}</p>
+            </div>
+          </div>
+
+          {tel && tel.fuel_percent != null && <FuelBar pct={tel.fuel_percent} />}
+
+          <div className="flex gap-2">
+            <button
+              onClick={() => onPlanLoad(driver)}
+              className="flex-1 flex items-center justify-center gap-1.5 text-xs bg-white text-black rounded-lg px-3 py-1.5 font-medium hover:bg-slate-200 transition-colors"
+            >
+              <Package className="w-3 h-3" /> Assign Load
+            </button>
+            <Link
+              href={`/driver?id=${driver.id}`}
+              className="flex items-center gap-1.5 text-xs border border-slate-700 rounded-lg px-3 py-1.5 text-slate-400 hover:text-white hover:border-slate-500 transition-colors"
+            >
+              <Radio className="w-3 h-3" /> Trucky
+            </Link>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Trip Planner ─────────────────────────────────────────────────────────────
+
+function TripPlanner({ prefilledDriver }: { prefilledDriver?: Driver }) {
+  const [destination, setDestination] = useState("");
+  const [miles, setMiles] = useState("");
+  const [requiredBy, setRequiredBy] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState<TripPlanResult[] | null>(null);
+  const [expandedPlan, setExpandedPlan] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (prefilledDriver) {
+      setDestination("");
+      setMiles("");
+      setResults(null);
+    }
+  }, [prefilledDriver]);
+
+  const search = async () => {
+    if (!miles || isNaN(Number(miles))) { setError("Enter valid distance in miles"); return; }
+    setLoading(true); setError(null); setResults(null);
+    try {
+      const body: Record<string, unknown> = { destination: destination || "Destination", distance_miles: Number(miles) };
+      if (requiredBy) body.required_by = new Date(requiredBy).toISOString();
+      const r = await fetch(`${API_URL}/api/trip/plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      setResults(d.results || []);
+    } catch { setError("Failed to compute trip plan. Backend may be offline."); }
+    finally { setLoading(false); }
+  };
+
+  const complianceBadge = (c: string) => (
+    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${COMPLIANCE_COLOR[c] || "text-slate-400 border-slate-600"}`}>{c.replace(/_/g," ")}</span>
+  );
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-4 py-3 border-b border-slate-700/60 flex items-center gap-2">
+        <Package className="w-4 h-4 text-blue-400" />
+        <h2 className="text-sm font-semibold text-white">Load Planner</h2>
+        <span className="text-[10px] text-slate-500 ml-auto">FMCSA-Compliant HOS</span>
+      </div>
+
+      <div className="p-4 space-y-3">
+        <div>
+          <label className="text-[10px] text-slate-500 uppercase tracking-wide">Destination</label>
+          <input
+            value={destination}
+            onChange={e => setDestination(e.target.value)}
+            placeholder="e.g. Boston, MA"
+            className="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] text-slate-500 uppercase tracking-wide">Distance (miles)</label>
+          <input
+            value={miles}
+            onChange={e => setMiles(e.target.value)}
+            placeholder="e.g. 250"
+            type="number"
+            className="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] text-slate-500 uppercase tracking-wide">Required By (optional)</label>
+          <input
+            value={requiredBy}
+            onChange={e => setRequiredBy(e.target.value)}
+            type="datetime-local"
+            className="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none [color-scheme:dark]"
+          />
+        </div>
+        <button
+          onClick={search}
+          disabled={loading}
+          className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg px-4 py-2.5 transition-colors disabled:opacity-50"
+        >
+          {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+          {loading ? "Computing HOS Plans..." : "Find Best Driver"}
+        </button>
+        {error && <p className="text-xs text-red-400">{error}</p>}
+      </div>
+
+      {results && (
+        <div className="flex-1 overflow-y-auto border-t border-slate-700/60">
+          <div className="p-3 space-y-2">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wide px-1">
+              {results.length} drivers evaluated — sorted by earliest delivery
+            </p>
+            {results.length === 0 && <p className="text-sm text-slate-400 text-center py-4">No drivers available for this load.</p>}
+            {results.map(r => (
+              <div key={r.rank} className={`border rounded-xl overflow-hidden ${
+                r.plan.compliance === "COMPLIANT" ? "border-green-500/30 bg-green-500/5" :
+                r.plan.compliance === "NEEDS_REST" ? "border-yellow-500/30 bg-yellow-500/5" :
+                r.plan.compliance === "CANNOT_ASSIGN" ? "border-slate-700 opacity-60" :
+                "border-slate-700 bg-slate-900/50"
+              }`}>
+                <div className="p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className="text-xs font-bold text-slate-400">#{r.rank}</span>
+                        <span className="text-sm font-semibold text-white">{r.driver_name}</span>
+                        {complianceBadge(r.plan.compliance)}
+                        {r.meets_deadline === true && <span className="text-[10px] text-green-400">✓ Meets Deadline</span>}
+                        {r.meets_deadline === false && <span className="text-[10px] text-red-400">✗ Misses Deadline</span>}
+                      </div>
+                      <p className="text-[11px] text-slate-500 truncate">{r.truck}</p>
+                      <p className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+                        <MapPin className="w-2.5 h-2.5" />{r.location}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-xs font-bold text-white">{r.plan.earliest_display}</p>
+                      <p className="text-[10px] text-slate-500">Drive: {r.plan.drive_time_label}</p>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">{r.plan.explanation}</p>
+
+                  {r.plan.warnings.length > 0 && r.plan.warnings.map((w, i) => (
+                    <p key={i} className="text-[10px] text-yellow-400 flex items-center gap-1 mt-1">
+                      <AlertTriangle className="w-2.5 h-2.5" />{w}
+                    </p>
+                  ))}
+
+                  {/* HOS mini bars */}
+                  <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
+                    <HOSMiniBar label="Drive Rem" mins={r.hos_drive_rem} maxMins={660} warn={180} danger={60} />
+                    <HOSMiniBar label="Shift Rem" mins={r.hos_shift_rem} maxMins={840} warn={240} danger={60} />
+                  </div>
+
+                  {/* Timeline */}
+                  {r.plan.timeline.length > 0 && (
+                    <button onClick={() => setExpandedPlan(expandedPlan === r.rank ? null : r.rank)}
+                      className="mt-2 text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                      {expandedPlan === r.rank ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                      {expandedPlan === r.rank ? "Hide" : "Show"} Trip Timeline
+                    </button>
+                  )}
+                  {expandedPlan === r.rank && (
+                    <div className="mt-2 space-y-1">
+                      {r.plan.timeline.map((t, i) => (
+                        <div key={i} className="flex items-center gap-2 text-[10px]">
+                          <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                            t.event.includes("Arrive") ? "bg-green-400" :
+                            t.event.includes("Rest") ? "bg-blue-400" :
+                            t.event.includes("Break") ? "bg-yellow-400" : "bg-slate-400"
+                          }`} />
+                          <span className="text-slate-300 font-mono">+{Math.floor(t.at_mins/60)}h{t.at_mins%60}m</span>
+                          <span className="text-slate-400">{t.event}</span>
+                          {t.duration_mins != null && t.duration_mins > 0 && (
+                            <span className="text-slate-600">({Math.floor(t.duration_mins/60)}h{t.duration_mins%60}m)</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -135,314 +434,234 @@ function HOSBar({ mins }: { mins: number }) {
 // ─── Dispatcher Voice Panel ────────────────────────────────────────────────────
 
 function DispatcherVoicePanel({ onClose }: { onClose: () => void }) {
-  const [isConnected, setIsConnected] = useState(false);
-  const [isListening, setIsListening] = useState(false);
-  const [isTruckyTalking, setIsTruckyTalking] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
-  const [transcripts, setTranscripts] = useState<Transcript[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [isConnected, setIsConnected]   = useState(false);
+  const [isListening, setIsListening]   = useState(false);
+  const [isTruckyTalking, setTruckyTalking] = useState(false);
+  const [status, setStatus]   = useState<"idle"|"connecting"|"connected"|"error">("idle");
+  const [transcripts, setTranscripts]   = useState<Transcript[]>([]);
+  const [error, setError] = useState<string|null>(null);
 
-  const wsRef = useRef<WebSocket | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const playbackCtxRef = useRef<AudioContext | null>(null);
-  const playbackTimeRef = useRef<number>(0);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
-  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const wsRef       = useRef<WebSocket|null>(null);
+  const audioCtxRef = useRef<AudioContext|null>(null);
+  const playCtxRef  = useRef<AudioContext|null>(null);
+  const playTimeRef = useRef(0);
+  const procRef     = useRef<ScriptProcessorNode|null>(null);
+  const srcRef      = useRef<MediaStreamAudioSourceNode|null>(null);
+  const streamRef   = useRef<MediaStream|null>(null);
+  const endRef      = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [transcripts]);
-
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [transcripts]);
   useEffect(() => () => { disconnectVoice(); }, []);
 
-  const scheduleChunk = useCallback((pcmBuffer: ArrayBuffer) => {
-    const ctx = playbackCtxRef.current;
-    if (!ctx) return;
-    const pcm16 = new Int16Array(pcmBuffer);
-    const float32 = new Float32Array(pcm16.length);
-    for (let i = 0; i < pcm16.length; i++) float32[i] = pcm16[i] / 32768.0;
-    const buf = ctx.createBuffer(1, float32.length, 24000);
-    buf.getChannelData(0).set(float32);
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(ctx.destination);
-    const startAt = Math.max(ctx.currentTime + 0.02, playbackTimeRef.current);
-    src.start(startAt);
-    playbackTimeRef.current = startAt + buf.duration;
-    src.onended = () => {
-      if (playbackTimeRef.current <= ctx.currentTime + 0.05) {
-        setIsTruckyTalking(false);
-      }
-    };
+  const scheduleChunk = useCallback((buf: ArrayBuffer) => {
+    const ctx = playCtxRef.current; if (!ctx) return;
+    const p = new Int16Array(buf);
+    const f = new Float32Array(p.length);
+    for (let i = 0; i < p.length; i++) f[i] = p[i] / 32768;
+    const ab = ctx.createBuffer(1, f.length, 24000);
+    ab.getChannelData(0).set(f);
+    const s = ctx.createBufferSource(); s.buffer = ab; s.connect(ctx.destination);
+    const at = Math.max(ctx.currentTime + 0.02, playTimeRef.current);
+    s.start(at); playTimeRef.current = at + ab.duration;
+    s.onended = () => { if (playTimeRef.current <= ctx.currentTime + 0.05) setTruckyTalking(false); };
   }, []);
 
   const connectVoice = useCallback(async () => {
-    setConnectionStatus("connecting");
-    setError(null);
-
+    setStatus("connecting"); setError(null);
     audioCtxRef.current = new AudioContext();
-    playbackCtxRef.current = new AudioContext({ sampleRate: 24000 });
-    playbackTimeRef.current = 0;
-
+    playCtxRef.current  = new AudioContext({ sampleRate: 24000 });
+    playTimeRef.current = 0;
     const ws = new WebSocket(`${WS_URL}/ws/dispatcher/voice`);
     wsRef.current = ws;
-
-    ws.onopen = () => { setIsConnected(true); setConnectionStatus("connected"); };
-    ws.onclose = (e) => {
-      setIsConnected(false); setIsListening(false); setIsTruckyTalking(false);
-      if (e.code === 1011 || e.code === 1006) {
-        setConnectionStatus("connecting");
-        setTimeout(() => connectVoice(), 3000);
-      } else {
-        setConnectionStatus("idle");
-      }
+    ws.onopen  = () => { setIsConnected(true); setStatus("connected"); };
+    ws.onclose = e => {
+      setIsConnected(false); setIsListening(false); setTruckyTalking(false);
+      if (e.code === 1011 || e.code === 1006) { setStatus("connecting"); setTimeout(connectVoice, 3000); }
+      else setStatus("idle");
     };
-    ws.onerror = () => { setError("Connection failed."); setConnectionStatus("error"); };
-
-    ws.onmessage = async (event) => {
-      const msg = JSON.parse(event.data);
+    ws.onerror = () => { setError("Connection failed."); setStatus("error"); };
+    ws.onmessage = async ev => {
+      const msg = JSON.parse(ev.data);
       if (msg.type === "audio") {
-        const binary = atob(msg.data);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        setIsTruckyTalking(true);
-        scheduleChunk(bytes.buffer);
+        const b = atob(msg.data); const u = new Uint8Array(b.length);
+        for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
+        setTruckyTalking(true); scheduleChunk(u.buffer);
       } else if (msg.type === "transcript" && msg.text?.trim()) {
-        setTranscripts(prev => [...prev, {
-          id: Date.now().toString(),
-          speaker: msg.speaker === "trucky" ? "trucky" : "dispatcher",
-          text: msg.text,
-          timestamp: new Date(),
-        }]);
-      } else if (msg.type === "turn_complete") {
-        playbackTimeRef.current = 0;
-      } else if (msg.type === "error") {
-        setError(msg.message);
-      }
+        setTranscripts(p => [...p, { id: Date.now().toString(), speaker: msg.speaker === "trucky" ? "trucky" : "dispatcher", text: msg.text, timestamp: new Date() }]);
+      } else if (msg.type === "turn_complete") { playTimeRef.current = 0; }
+      else if (msg.type === "error") setError(msg.message);
     };
   }, [scheduleChunk]);
 
-  const disconnectVoice = useCallback(() => {
-    stopMic();
-    wsRef.current?.close();
-    wsRef.current = null;
-    audioCtxRef.current?.close(); audioCtxRef.current = null;
-    playbackCtxRef.current?.close(); playbackCtxRef.current = null;
-    setIsConnected(false); setConnectionStatus("idle");
+  const stopMic = useCallback(() => {
+    procRef.current?.disconnect(); srcRef.current?.disconnect(); streamRef.current?.getTracks().forEach(t => t.stop());
+    procRef.current = null; srcRef.current = null; streamRef.current = null; setIsListening(false);
   }, []);
 
-  const stopMic = useCallback(() => {
-    processorRef.current?.disconnect();
-    sourceRef.current?.disconnect();
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    processorRef.current = null; sourceRef.current = null; streamRef.current = null;
-    setIsListening(false);
-  }, []);
+  const disconnectVoice = useCallback(() => {
+    stopMic(); wsRef.current?.close(); wsRef.current = null;
+    audioCtxRef.current?.close(); audioCtxRef.current = null;
+    playCtxRef.current?.close(); playCtxRef.current = null;
+    setIsConnected(false); setStatus("idle");
+  }, [stopMic]);
 
   const startMic = useCallback(async () => {
     if (!audioCtxRef.current || !wsRef.current) return;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true }); streamRef.current = stream;
       const ctx = audioCtxRef.current;
       if (ctx.state === "suspended") await ctx.resume();
-      if (playbackCtxRef.current?.state === "suspended") await playbackCtxRef.current.resume();
-
-      const source = ctx.createMediaStreamSource(stream);
-      sourceRef.current = source;
-      const TARGET = 16000;
-      const native = ctx.sampleRate;
-      const processor = ctx.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
-      processor.onaudioprocess = (e) => {
+      if (playCtxRef.current?.state === "suspended") await playCtxRef.current.resume();
+      const src = ctx.createMediaStreamSource(stream); srcRef.current = src;
+      const RATE = 16000; const native = ctx.sampleRate;
+      const proc = ctx.createScriptProcessor(4096, 1, 1); procRef.current = proc;
+      proc.onaudioprocess = e => {
         if (wsRef.current?.readyState !== WebSocket.OPEN) return;
-        const float32 = e.inputBuffer.getChannelData(0);
-        const ratio = native / TARGET;
-        const outLen = Math.round(float32.length / ratio);
-        const resampled = new Float32Array(outLen);
-        for (let i = 0; i < outLen; i++) {
-          const src = i * ratio;
-          const lo = Math.floor(src);
-          const hi = Math.min(lo + 1, float32.length - 1);
-          resampled[i] = float32[lo] + (float32[hi] - float32[lo]) * (src - lo);
-        }
-        const int16 = new Int16Array(outLen);
-        for (let i = 0; i < outLen; i++) int16[i] = Math.max(-32768, Math.min(32767, resampled[i] * 32768));
-        const binary = String.fromCharCode(...new Uint8Array(int16.buffer));
-        wsRef.current.send(JSON.stringify({ type: "audio", data: btoa(binary) }));
+        const f = e.inputBuffer.getChannelData(0); const r = native / RATE;
+        const out = Math.round(f.length / r); const rs = new Float32Array(out);
+        for (let i = 0; i < out; i++) { const s = i * r; const lo = Math.floor(s); const hi = Math.min(lo+1, f.length-1); rs[i] = f[lo] + (f[hi]-f[lo])*(s-lo); }
+        const i16 = new Int16Array(out);
+        for (let i = 0; i < out; i++) i16[i] = Math.max(-32768, Math.min(32767, rs[i]*32768));
+        wsRef.current.send(JSON.stringify({ type: "audio", data: btoa(String.fromCharCode(...new Uint8Array(i16.buffer))) }));
       };
-      source.connect(processor);
-      processor.connect(ctx.destination);
-      setIsListening(true);
-    } catch {
-      setError("Microphone access denied.");
-    }
+      src.connect(proc); proc.connect(ctx.destination); setIsListening(true);
+    } catch { setError("Microphone access denied."); }
   }, []);
 
-  const sendScenario = useCallback((text: string) => {
+  const sendText = useCallback((text: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     wsRef.current.send(JSON.stringify({ type: "text", text }));
-    setTranscripts(prev => [...prev, {
-      id: Date.now().toString(), speaker: "dispatcher", text, timestamp: new Date(),
-    }]);
+    setTranscripts(p => [...p, { id: Date.now().toString(), speaker: "dispatcher", text, timestamp: new Date() }]);
   }, []);
 
   return (
-    <div className="fixed bottom-0 right-0 w-full sm:w-[420px] bg-card border border-border border-b-0 rounded-t-2xl shadow-2xl z-50 flex flex-col" style={{ maxHeight: "520px" }}>
-      {/* Panel header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-border shrink-0">
-        <div className="bg-black dark:bg-white rounded-lg p-1.5">
-          <Zap className="w-3.5 h-3.5 text-white dark:text-black" />
+    <div className="fixed bottom-0 right-0 w-full sm:w-[400px] bg-slate-900 border border-slate-700 border-b-0 rounded-t-2xl shadow-2xl z-50 flex flex-col" style={{ maxHeight: 500 }}>
+      <div className="flex items-center gap-2.5 px-4 py-3 border-b border-slate-700 shrink-0">
+        <div className="bg-purple-600 rounded-lg p-1.5"><Zap className="w-3.5 h-3.5 text-white" /></div>
+        <div><h3 className="text-sm font-bold text-white">Trucky Dispatch AI</h3><p className="text-[10px] text-slate-500">Voice-powered fleet intelligence</p></div>
+        <div className={`ml-auto text-[10px] flex items-center gap-1.5 ${status === "connected" ? "text-green-400" : "text-slate-500"}`}>
+          <div className={`w-1.5 h-1.5 rounded-full ${status === "connected" ? "bg-green-400 animate-pulse" : "bg-slate-600"}`} />
+          {status === "connected" ? "Live" : status === "connecting" ? "Connecting..." : "Offline"}
         </div>
-        <div>
-          <h3 className="text-sm font-bold text-foreground">Trucky Dispatch</h3>
-          <p className="text-xs text-muted-foreground leading-none">AI fleet co-pilot</p>
-        </div>
-        <div className={`ml-auto flex items-center gap-1.5 text-xs ${connectionStatus === "connected" ? "text-green-400" : "text-muted-foreground"}`}>
-          <div className={`w-1.5 h-1.5 rounded-full ${connectionStatus === "connected" ? "bg-green-400 animate-pulse" : "bg-gray-500"}`} />
-          {connectionStatus === "connected" ? "Live" : connectionStatus === "connecting" ? "Connecting..." : "Offline"}
-        </div>
-        <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors ml-2">
-          <X className="w-4 h-4" />
-        </button>
+        <button onClick={onClose} className="text-slate-500 hover:text-white ml-2"><X className="w-4 h-4" /></button>
       </div>
 
-      {/* Transcript */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
-        {transcripts.length === 0 ? (
-          <p className="text-xs text-muted-foreground text-center mt-6">
-            Ask Trucky about your fleet — locations, HOS status, violations.
-          </p>
-        ) : (
-          transcripts.map(t => (
+        {transcripts.length === 0
+          ? <p className="text-xs text-slate-500 text-center mt-8">Ask Trucky about your fleet, loads, HOS, violations…</p>
+          : transcripts.map(t => (
             <div key={t.id} className={`flex gap-2 ${t.speaker === "dispatcher" ? "flex-row-reverse" : ""}`}>
-              <div className={`text-xs px-3 py-2 rounded-xl max-w-[85%] ${
-                t.speaker === "trucky" ? "bg-muted text-foreground" : "bg-black dark:bg-white text-white dark:text-black"
-              }`}>
-                <p className="font-medium mb-0.5 opacity-60">{t.speaker === "trucky" ? "Trucky" : "You"}</p>
+              <div className={`text-xs px-3 py-2 rounded-xl max-w-[85%] ${t.speaker === "trucky" ? "bg-slate-800 text-slate-200" : "bg-purple-700 text-white"}`}>
+                <p className="font-medium mb-0.5 opacity-60 text-[10px]">{t.speaker === "trucky" ? "Trucky" : "You"}</p>
                 <p className="leading-relaxed">{t.text}</p>
               </div>
             </div>
-          ))
-        )}
-        <div ref={transcriptEndRef} />
+          ))}
+        <div ref={endRef} />
       </div>
 
-      {/* Controls */}
-      <div className="shrink-0 border-t border-border p-3 space-y-3">
+      <div className="shrink-0 border-t border-slate-700 p-3 space-y-2.5">
         {isConnected && (
           <div className="flex flex-wrap gap-1.5">
             {DISPATCHER_SCENARIOS.map(s => (
-              <button key={s.label} onClick={() => sendScenario(s.text)}
-                className="text-xs border border-border rounded-lg px-2.5 py-1 text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
-                {s.label}
-              </button>
+              <button key={s.label} onClick={() => sendText(s.text)} className="text-[10px] border border-slate-700 rounded-lg px-2 py-1 text-slate-400 hover:text-white hover:border-slate-500 transition-colors">{s.label}</button>
             ))}
           </div>
         )}
-
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           {isConnected ? (
             <>
-              <button
-                onClick={() => isListening ? stopMic() : startMic()}
-                className={`w-11 h-11 rounded-full flex items-center justify-center transition-all ${
-                  isListening ? "bg-red-500 hover:bg-red-600 shadow-lg shadow-red-500/30"
-                  : isTruckyTalking ? "bg-gray-700 cursor-not-allowed"
-                  : "bg-black dark:bg-white hover:opacity-90"
-                }`}
-                disabled={isTruckyTalking}
-              >
-                {isListening
-                  ? <Mic className="w-5 h-5 text-white" />
-                  : <MicOff className={`w-5 h-5 ${isTruckyTalking ? "text-gray-400" : "text-white dark:text-black"}`} />
-                }
+              <button onClick={() => isListening ? stopMic() : startMic()} disabled={isTruckyTalking}
+                className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-all ${isListening ? "bg-red-500 hover:bg-red-600" : isTruckyTalking ? "bg-slate-700 cursor-not-allowed" : "bg-purple-600 hover:bg-purple-500"}`}>
+                {isListening ? <Mic className="w-4 h-4 text-white" /> : <MicOff className="w-4 h-4 text-white opacity-70" />}
               </button>
-
               {isTruckyTalking && (
                 <div className="flex items-end gap-0.5 h-5">
-                  {[1,2,3,4,5].map(i => (
-                    <div key={i} className={`w-1 bg-purple-400 rounded-full bar-${i}`} style={{ height: `${8 + i * 4}px` }} />
-                  ))}
+                  {[6,10,14,10,6].map((h,i) => <div key={i} className="w-1 bg-purple-400 rounded-full animate-pulse" style={{ height: h }} />)}
                 </div>
               )}
-
-              <p className="text-xs text-muted-foreground flex-1">
-                {isListening ? "Listening..." : isTruckyTalking ? "Trucky speaking..." : "Tap mic to ask Trucky"}
-              </p>
-
-              <button onClick={disconnectVoice} className="text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-1.5">
-                End
-              </button>
+              <p className="text-xs text-slate-500 flex-1">{isListening ? "Listening..." : isTruckyTalking ? "Trucky speaking..." : "Tap to ask Trucky"}</p>
+              <button onClick={disconnectVoice} className="text-xs text-slate-500 hover:text-white border border-slate-700 rounded-lg px-2.5 py-1.5">End</button>
             </>
           ) : (
-            <button
-              onClick={connectVoice}
-              disabled={connectionStatus === "connecting"}
-              className="flex-1 flex items-center justify-center gap-2 bg-black dark:bg-white text-white dark:text-black px-4 py-2.5 rounded-xl text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
-            >
-              <Zap className="w-4 h-4" />
-              {connectionStatus === "connecting" ? "Connecting..." : "Talk to Trucky"}
+            <button onClick={connectVoice} disabled={status === "connecting"} className="flex-1 flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-500 text-white text-sm font-medium rounded-xl px-4 py-2.5 transition-colors disabled:opacity-50">
+              <Zap className="w-4 h-4" />{status === "connecting" ? "Connecting..." : "Talk to Trucky Dispatch"}
             </button>
           )}
         </div>
-
         {error && <p className="text-xs text-red-400">{error}</p>}
       </div>
     </div>
   );
 }
 
+// ─── Insights Panel ────────────────────────────────────────────────────────────
+
+function InsightsPanel({ insights }: { insights: Insight[] }) {
+  return (
+    <div className="space-y-2">
+      {insights.length === 0 ? (
+        <p className="text-xs text-slate-500 text-center py-4">Loading fleet intelligence…</p>
+      ) : insights.map((ins, i) => (
+        <div key={i} className={`border-l-2 rounded-r-lg p-3 ${INSIGHT_COLORS[ins.type] || "border-l-slate-600"}`}>
+          <p className="text-xs font-semibold text-white">{ins.title}</p>
+          <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">{ins.body}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // ─── Main Dashboard ────────────────────────────────────────────────────────────
 
 export default function DispatcherDashboard() {
-  const [drivers, setDrivers] = useState<Driver[]>([]);
-  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [drivers,   setDrivers]   = useState<Driver[]>([]);
+  const [alerts,    setAlerts]    = useState<Alert[]>([]);
+  const [insights,  setInsights]  = useState<Insight[]>([]);
+  const [stats,     setStats]     = useState<Record<string, number>>({});
   const [activities, setActivities] = useState<ToolActivity[]>([]);
   const [wsConnected, setWsConnected] = useState(false);
-  const [liveELD, setLiveELD] = useState(false);
+  const [liveELD,   setLiveELD]   = useState(false);
   const [showVoice, setShowVoice] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
-  const activityEndRef = useRef<HTMLDivElement>(null);
+  const [search,    setSearch]    = useState("");
+  const [filter,    setFilter]    = useState("all");
+  const [planDriver, setPlanDriver] = useState<Driver | undefined>();
+  const [showAlerts, setShowAlerts] = useState(false);
+  const wsRef = useRef<WebSocket|null>(null);
+
+  const fetchInsights = useCallback(async () => {
+    try {
+      const r = await fetch(`${API_URL}/api/fleet/insights`);
+      const d = await r.json();
+      setInsights(d.insights || []);
+      setStats(d.stats || {});
+    } catch {}
+  }, []);
 
   useEffect(() => {
-    activityEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [activities]);
+    fetchInsights();
+    const iv = setInterval(fetchInsights, 60000);
+    return () => clearInterval(iv);
+  }, [fetchInsights]);
 
   useEffect(() => {
     const connect = () => {
       const ws = new WebSocket(`${WS_URL}/ws/dispatcher`);
       wsRef.current = ws;
-      ws.onopen = () => setWsConnected(true);
+      ws.onopen  = () => setWsConnected(true);
       ws.onclose = () => { setWsConnected(false); setTimeout(connect, 3000); };
-      ws.onmessage = (event) => {
-        const msg = JSON.parse(event.data);
-        switch (msg.type) {
-          case "init":
-            setDrivers(msg.drivers);
-            setAlerts(msg.alerts);
-            setLiveELD(msg.drivers.some((d: Driver) => d.source === "samsara_live"));
-            break;
-          case "drivers_update":
-            setDrivers(msg.drivers);
-            setLiveELD(msg.source === "samsara_live");
-            break;
-          case "new_alert":
-            setAlerts(prev => [msg.alert, ...prev]);
-            break;
-          case "tool_activity":
-            setActivities(prev => [...prev.slice(-19), {
-              id: Date.now().toString(),
-              session_id: msg.session_id || msg.driver_id || "",
-              is_dispatcher: msg.is_dispatcher,
-              tool: msg.tool,
-              result: msg.result,
-              timestamp: new Date(),
-            }]);
-            break;
+      ws.onmessage = ev => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "init") {
+          setDrivers(msg.drivers || []); setAlerts(msg.alerts || []);
+          setLiveELD(msg.drivers?.some((d: Driver) => d.source === "samsara_live"));
+        } else if (msg.type === "drivers_update") {
+          setDrivers(msg.drivers || []); setLiveELD(msg.source === "samsara_live");
+          fetchInsights();
+        } else if (msg.type === "new_alert") {
+          setAlerts(p => [msg.alert, ...p]);
+        } else if (msg.type === "tool_activity") {
+          setActivities(p => [...p.slice(-19), { id: Date.now().toString(), session_id: msg.session_id || msg.driver_id || "", is_dispatcher: msg.is_dispatcher, tool: msg.tool, result: msg.result, timestamp: new Date() }]);
         }
       };
     };
@@ -453,287 +672,213 @@ export default function DispatcherDashboard() {
           fetch(`${API_URL}/api/drivers`).then(r => r.json()),
           fetch(`${API_URL}/api/alerts`).then(r => r.json()),
         ]);
-        setDrivers(dr);
-        setAlerts(al);
+        setDrivers(dr); setAlerts(al);
         setLiveELD(dr.some((d: Driver) => d.source === "samsara_live"));
       } catch {}
     };
 
-    connect();
-    fetchRest();
-    const interval = setInterval(fetchRest, 30000);
-    return () => { clearInterval(interval); wsRef.current?.close(); };
-  }, []);
+    connect(); fetchRest();
+    const iv = setInterval(fetchRest, 30000);
+    return () => { clearInterval(iv); wsRef.current?.close(); };
+  }, [fetchInsights]);
 
-  const acknowledgeAlert = async (alertId: string) => {
+  const ackAlert = async (id: string) => {
     try {
-      await fetch(`${API_URL}/api/alerts/${alertId}/acknowledge`, { method: "POST" });
-      setAlerts(prev => prev.map(a => a.id === alertId ? { ...a, acknowledged: true } : a));
+      await fetch(`${API_URL}/api/alerts/${id}/acknowledge`, { method: "POST" });
+      setAlerts(p => p.map(a => a.id === id ? { ...a, acknowledged: true } : a));
     } catch {}
   };
 
+  const filtered = drivers.filter(d => {
+    const matchSearch = !search || d.name.toLowerCase().includes(search.toLowerCase()) || d.truck.toLowerCase().includes(search.toLowerCase());
+    const matchFilter = filter === "all" || (filter === "on_route" && d.status === "on_route") || (filter === "resting" && d.status === "resting") || (filter === "low_hos" && d.hos.drive_time_remaining_mins < 120) || (filter === "violations" && d.hos.violation) || (filter === "available" && d.hos.drive_time_remaining_mins >= 300 && d.status !== "on_route");
+    return matchSearch && matchFilter;
+  });
+
   const unacked = alerts.filter(a => !a.acknowledged).length;
-  const onRoute = drivers.filter(d => d.status === "on_route").length;
-  const hosWarnings = drivers.filter(d => d.hos.drive_time_remaining_mins < 120).length;
+
+  // Stats
+  const total    = stats.total    || drivers.length;
+  const onRoute  = stats.on_route || drivers.filter(d => d.status === "on_route").length;
+  const avail    = stats.available || 0;
+  const hosWarn  = stats.low_hos  || 0;
+  const viols    = stats.violations || 0;
+  const lowFuel  = stats.low_fuel || 0;
+  const idling   = stats.idling   || 0;
+
+  const KPI = [
+    { label: "Total Fleet",    value: total,   sub: "drivers",         icon: Truck,        color: "text-slate-300" },
+    { label: "On Route",       value: onRoute,  sub: "active now",     icon: Navigation,   color: "text-green-400" },
+    { label: "Available",      value: avail,    sub: "for new loads",  icon: Package,      color: "text-blue-400" },
+    { label: "HOS Warnings",   value: hosWarn,  sub: "< 2h left",      icon: Timer,        color: "text-yellow-400" },
+    { label: "Violations",     value: viols,    sub: "must stop now",  icon: AlertCircle,  color: "text-red-400" },
+    { label: "Low Fuel",       value: lowFuel,  sub: "below 25%",      icon: Fuel,         color: "text-orange-400" },
+    { label: "Idling",         value: idling,   sub: "engine on, parked", icon: Gauge,     color: "text-purple-400" },
+    { label: "Unread Alerts",  value: unacked,  sub: "need attention", icon: Bell,         color: "text-pink-400" },
+  ];
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b border-border bg-card sticky top-0 z-10">
-        <div className="max-w-screen-xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="bg-black dark:bg-white rounded-lg p-1.5">
-              <Truck className="w-4 h-4 text-white dark:text-black" />
-            </div>
+    <div className="min-h-screen bg-slate-950 text-white flex flex-col">
+
+      {/* ── Header ── */}
+      <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-10">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-3 flex items-center gap-4">
+          <div className="flex items-center gap-2.5">
+            <div className="bg-white rounded-lg p-1.5"><Truck className="w-4 h-4 text-black" /></div>
             <div>
-              <h1 className="text-base font-bold text-foreground">Trucky</h1>
-              <p className="text-xs text-muted-foreground leading-none">Dispatcher Dashboard</p>
+              <h1 className="text-sm font-bold tracking-tight">Trucky</h1>
+              <p className="text-[10px] text-slate-500 leading-none">Fleet Intelligence Platform</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            {/* Live ELD badge */}
-            <div className={`flex items-center gap-1.5 text-xs ${liveELD ? "text-green-400" : "text-muted-foreground"}`}>
-              {liveELD ? <Database className="w-3.5 h-3.5" /> : <Database className="w-3.5 h-3.5 opacity-40" />}
-              {liveELD ? "Samsara Live" : "Demo Data"}
+          <div className="flex items-center gap-2 ml-auto flex-wrap">
+            {liveELD && (
+              <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 rounded-lg px-2 py-1">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <Database className="w-3 h-3" /> Samsara Live
+              </div>
+            )}
+            <div className={`flex items-center gap-1.5 text-[10px] ${wsConnected ? "text-slate-400" : "text-slate-600"}`}>
+              <div className={`w-1.5 h-1.5 rounded-full ${wsConnected ? "bg-slate-400 animate-pulse" : "bg-slate-700"}`} />
+              {wsConnected ? "WS Connected" : "Reconnecting"}
             </div>
-
-            {/* WS indicator */}
-            <div className={`flex items-center gap-1.5 text-xs ${wsConnected ? "text-green-400" : "text-gray-500"}`}>
-              {wsConnected ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
-              {wsConnected ? "Live" : "Connecting..."}
-            </div>
-
-            {/* Talk to Trucky button */}
-            <button
-              onClick={() => setShowVoice(v => !v)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                showVoice
-                  ? "bg-purple-600 text-white"
-                  : "bg-black dark:bg-white text-white dark:text-black hover:opacity-90"
-              }`}
-            >
-              <Zap className="w-3.5 h-3.5" />
-              Talk to Trucky
+            <button onClick={() => setShowAlerts(v => !v)} className={`relative flex items-center gap-1.5 border rounded-lg px-3 py-1.5 text-[11px] font-medium transition-colors ${showAlerts ? "bg-slate-700 border-slate-600 text-white" : "border-slate-700 text-slate-400 hover:text-white hover:border-slate-600"}`}>
+              <Bell className="w-3.5 h-3.5" /> Alerts
+              {unacked > 0 && <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[9px] font-bold w-4 h-4 flex items-center justify-center rounded-full">{unacked}</span>}
             </button>
-
-            <Link
-              href="/driver"
-              className="flex items-center gap-1.5 border border-border text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-            >
-              <Radio className="w-3.5 h-3.5" />
-              Driver View
+            <button onClick={() => setShowVoice(v => !v)} className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium transition-colors ${showVoice ? "bg-purple-700 text-white" : "bg-purple-600 hover:bg-purple-500 text-white"}`}>
+              <Zap className="w-3.5 h-3.5" /> Talk to Trucky
+            </button>
+            <Link href="/driver" className="flex items-center gap-1.5 border border-slate-700 rounded-lg px-3 py-1.5 text-[11px] text-slate-400 hover:text-white hover:border-slate-600 transition-colors">
+              <Radio className="w-3.5 h-3.5" /> Driver
             </Link>
           </div>
         </div>
       </header>
 
-      <main className="max-w-screen-xl mx-auto px-4 sm:px-6 py-5 space-y-5">
-        {/* Stats bar */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {[
-            { label: "Active Trucks", value: onRoute, sub: `${drivers.length} total in fleet`, icon: Truck, accent: "text-green-400" },
-            { label: "Unread Alerts", value: unacked, sub: "require attention", icon: Bell, accent: "text-red-400" },
-            { label: "HOS Warnings", value: hosWarnings, sub: "< 2 hours left", icon: AlertTriangle, accent: "text-yellow-400" },
-            { label: "Trucky Active", value: onRoute, sub: liveELD ? "Samsara live data" : "demo mode", icon: Zap, accent: "text-purple-400" },
-          ].map(s => (
-            <div key={s.label} className="bg-card border border-border rounded-xl p-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-2xl font-bold text-foreground">{s.value}</p>
-                  <p className="text-xs font-medium text-foreground mt-0.5">{s.label}</p>
-                  <p className="text-xs text-muted-foreground">{s.sub}</p>
+      {/* ── KPI Bar ── */}
+      <div className="border-b border-slate-800 bg-slate-900/40">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6">
+          <div className="grid grid-cols-4 sm:grid-cols-8 divide-x divide-slate-800">
+            {KPI.map(k => (
+              <div key={k.label} className="px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xl font-bold text-white">{k.value}</p>
+                  <k.icon className={`w-4 h-4 ${k.color}`} />
                 </div>
-                <s.icon className={`w-5 h-5 ${s.accent}`} />
+                <p className="text-[10px] font-medium text-slate-300 leading-tight">{k.label}</p>
+                <p className="text-[10px] text-slate-600 leading-tight">{k.sub}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Alerts Panel (slide-down) ── */}
+      {showAlerts && (
+        <div className="border-b border-slate-800 bg-slate-900/60 max-w-[1600px] mx-auto w-full px-4 sm:px-6 py-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            {alerts.length === 0 ? <p className="text-xs text-slate-500 col-span-3 text-center py-2">No alerts</p> : alerts.map(a => (
+              <div key={a.id} className={`flex items-start gap-2 p-2.5 rounded-lg border-l-2 ${a.severity === "HIGH" ? "border-l-red-500 bg-red-500/5" : a.severity === "MEDIUM" ? "border-l-yellow-500 bg-yellow-500/5" : "border-l-blue-500 bg-blue-500/5"} ${a.acknowledged ? "opacity-40" : ""}`}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] font-medium text-white">{a.driver_name}</p>
+                  <p className="text-[10px] text-slate-400 leading-relaxed">{a.message}</p>
+                </div>
+                {!a.acknowledged && <button onClick={() => ackAlert(a.id)} className="shrink-0 text-slate-500 hover:text-white"><BellOff className="w-3.5 h-3.5" /></button>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Main 3-column layout ── */}
+      <div className="flex-1 max-w-[1600px] mx-auto w-full px-4 sm:px-6 py-4">
+        <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr_280px] gap-4 h-full">
+
+          {/* ── LEFT: Trip Planner ── */}
+          <div className="bg-slate-900 border border-slate-700/60 rounded-xl overflow-hidden flex flex-col" style={{ maxHeight: "calc(100vh - 220px)" }}>
+            <TripPlanner prefilledDriver={planDriver} />
+          </div>
+
+          {/* ── CENTER: Fleet Grid ── */}
+          <div className="flex flex-col gap-3">
+            {/* Search + Filter bar */}
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search driver or truck…"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none" />
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Filter className="w-3.5 h-3.5 text-slate-500" />
+                {["all","on_route","resting","available","low_hos","violations"].map(f => (
+                  <button key={f} onClick={() => setFilter(f)} className={`text-[10px] px-2 py-1 rounded-lg border transition-colors ${filter === f ? "bg-white text-black border-white" : "border-slate-700 text-slate-400 hover:border-slate-500"}`}>
+                    {f.replace("_"," ")}
+                  </button>
+                ))}
               </div>
             </div>
-          ))}
-        </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          {/* Driver cards */}
-          <div className="lg:col-span-2 space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-foreground">Fleet Status</h2>
-              {liveELD && (
-                <span className="flex items-center gap-1 text-xs text-green-400">
-                  <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                  Samsara ELD — Live
-                </span>
+            <div className="flex items-center justify-between text-[10px] text-slate-500 px-1">
+              <span>{filtered.length} drivers shown</span>
+              {liveELD && <span className="flex items-center gap-1 text-emerald-400"><div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />Samsara ELD — refreshes every 30s</span>}
+            </div>
+
+            <div className="space-y-2 overflow-y-auto" style={{ maxHeight: "calc(100vh - 270px)" }}>
+              {filtered.length === 0 ? (
+                <div className="bg-slate-900 border border-slate-700/60 rounded-xl p-8 text-center text-slate-500 text-sm">
+                  {drivers.length === 0 ? "Loading fleet data from Samsara…" : "No drivers match your filter"}
+                </div>
+              ) : (
+                filtered.map(d => <DriverCard key={d.id} driver={d} onPlanLoad={setPlanDriver} />)
               )}
             </div>
-
-            {drivers.length === 0 ? (
-              <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground text-sm">
-                Loading fleet data...
-              </div>
-            ) : (
-              drivers.map(driver => (
-                <div key={driver.id} className="bg-card border border-border rounded-xl p-4 hover:border-foreground/20 transition-colors">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <div className={`w-2 h-2 rounded-full ${STATUS_DOT[driver.status] || "bg-gray-500"}`} />
-                        <span className="font-medium text-foreground text-sm">{driver.name}</span>
-                        <span className="text-xs text-muted-foreground">{STATUS_LABEL[driver.status] || driver.status}</span>
-                        {driver.source === "samsara_live" && (
-                          <span className="text-xs text-green-400 flex items-center gap-0.5">
-                            <Database className="w-2.5 h-2.5" /> Live
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-muted-foreground mb-3">{driver.truck}</p>
-
-                      <HOSBar mins={driver.hos.drive_time_remaining_mins} />
-
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                        <div className="flex items-start gap-1.5">
-                          <MapPin className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
-                          <span className="text-muted-foreground truncate">{driver.current_location.address}</span>
-                        </div>
-                        {driver.current_location.speed_mph !== undefined && driver.current_location.speed_mph > 0 && (
-                          <div className="flex items-center gap-1.5">
-                            <Navigation className="w-3 h-3 text-muted-foreground shrink-0" />
-                            <span className="text-muted-foreground">{driver.current_location.speed_mph} mph</span>
-                          </div>
-                        )}
-                        {driver.destination && (
-                          <div className="flex items-start gap-1.5">
-                            <Navigation className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
-                            <span className="text-muted-foreground truncate">→ {driver.destination.address}</span>
-                          </div>
-                        )}
-                        {driver.route?.eta && (
-                          <div className="flex items-center gap-1.5">
-                            <Clock className="w-3 h-3 text-muted-foreground shrink-0" />
-                            <span className="text-muted-foreground">
-                              ETA {new Date(driver.route.eta).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })}
-                            </span>
-                          </div>
-                        )}
-                        {driver.route?.restricted_roads_avoided && driver.route.restricted_roads_avoided.length > 0 && (
-                          <div className="flex items-center gap-1.5">
-                            <Shield className="w-3 h-3 text-green-400 shrink-0" />
-                            <span className="text-green-400">Route pre-checked</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    <Link
-                      href={`/driver?id=${driver.id}`}
-                      className="shrink-0 flex items-center gap-1.5 text-xs border border-border rounded-lg px-3 py-2 text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
-                    >
-                      <Radio className="w-3 h-3" />
-                      Trucky
-                    </Link>
-                  </div>
-                </div>
-              ))
-            )}
           </div>
 
-          {/* Right column: Activity + Alerts */}
-          <div className="space-y-4">
-            {/* Live Trucky Activity */}
-            <div className="bg-card border border-border rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-                <Activity className="w-4 h-4 text-purple-400" />
-                <h2 className="text-sm font-medium text-foreground">Trucky Actions</h2>
-                <span className="ml-auto text-xs text-muted-foreground">Live</span>
+          {/* ── RIGHT: Intelligence + Activity ── */}
+          <div className="flex flex-col gap-4 overflow-y-auto" style={{ maxHeight: "calc(100vh - 220px)" }}>
+            {/* Fleet Intelligence */}
+            <div className="bg-slate-900 border border-slate-700/60 rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-700/60 flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-blue-400" />
+                <h2 className="text-sm font-semibold text-white">Fleet Intelligence</h2>
+                <button onClick={fetchInsights} className="ml-auto text-slate-500 hover:text-white"><RefreshCw className="w-3 h-3" /></button>
               </div>
-              <div className="p-3 space-y-2 max-h-48 overflow-y-auto">
-                {activities.length === 0 ? (
-                  <p className="text-xs text-muted-foreground text-center py-4">
-                    Trucky&apos;s tool actions appear here in real-time
-                  </p>
-                ) : (
-                  [...activities].reverse().map(act => {
-                    const meta = TOOL_META[act.tool];
-                    const Icon = meta?.icon || Activity;
-                    return (
-                      <div key={act.id} className="flex items-start gap-2 text-xs">
-                        <Icon className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${meta?.color || "text-muted-foreground"}`} />
-                        <div className="flex-1 min-w-0">
-                          <span className="text-foreground font-medium">
-                            {act.is_dispatcher ? "Dispatcher" : act.session_id}
-                          </span>
-                          <span className="text-muted-foreground"> — {meta?.label || act.tool}</span>
-                          {act.result?.compliance != null && (
-                            <p className={String(act.result.compliance).includes("COMPLIANT") && !String(act.result.compliance).includes("NON") ? "text-green-400" : "text-red-400"}>
-                              {String(act.result.compliance)}
-                            </p>
-                          )}
-                          {act.result?.safe_for_truck === false && <p className="text-red-400">⚠ Route blocked — rerouted</p>}
-                          {act.result?.notifications_sent != null && <p className="text-green-400">✓ All parties notified</p>}
-                          {act.result?.fleet_size != null && <p className="text-cyan-400">Fleet: {String(act.result.fleet_size)} drivers</p>}
-                        </div>
-                        <span className="text-muted-foreground shrink-0">
-                          {act.timestamp.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })}
-                        </span>
-                      </div>
-                    );
-                  })
-                )}
-                <div ref={activityEndRef} />
+              <div className="p-3">
+                <InsightsPanel insights={insights} />
               </div>
             </div>
 
-            {/* Alerts */}
-            <div className="bg-card border border-border rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Bell className="w-4 h-4 text-muted-foreground" />
-                  <h2 className="text-sm font-medium text-foreground">Alerts</h2>
-                </div>
-                {unacked > 0 && (
-                  <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{unacked}</span>
-                )}
+            {/* Live Tool Activity */}
+            <div className="bg-slate-900 border border-slate-700/60 rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-700/60 flex items-center gap-2">
+                <Activity className="w-4 h-4 text-purple-400" />
+                <h2 className="text-sm font-semibold text-white">Trucky Activity</h2>
+                <span className="ml-auto text-[10px] text-slate-500">Live</span>
               </div>
-              <div className="divide-y divide-border max-h-80 overflow-y-auto">
-                {alerts.length === 0 ? (
-                  <p className="p-4 text-center text-xs text-muted-foreground">No alerts</p>
-                ) : (
-                  alerts.map(alert => (
-                    <div key={alert.id} className={`p-3 border-l-4 ${
-                      alert.severity === "HIGH" ? "border-l-red-500" :
-                      alert.severity === "MEDIUM" ? "border-l-yellow-500" : "border-l-blue-500"
-                    } ${alert.acknowledged ? "opacity-50" : ""}`}>
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 mb-1">
-                            <span className="text-xs font-medium text-foreground">{alert.driver_name}</span>
-                            {alert.auto_resolved && (
-                              <span className="flex items-center gap-0.5 text-xs text-green-400">
-                                <CheckCircle className="w-3 h-3" /> Auto
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-muted-foreground leading-relaxed">{alert.message}</p>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {new Date(alert.timestamp).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })}
-                          </p>
-                        </div>
-                        {!alert.acknowledged && (
-                          <button
-                            onClick={() => acknowledgeAlert(alert.id)}
-                            className="shrink-0 p-1 hover:text-foreground text-muted-foreground transition-colors"
-                            title="Acknowledge"
-                          >
-                            <BellOff className="w-3.5 h-3.5" />
-                          </button>
-                        )}
+              <div className="p-3 space-y-2 max-h-48 overflow-y-auto">
+                {activities.length === 0
+                  ? <p className="text-[11px] text-slate-500 text-center py-4">Trucky&apos;s tool actions appear here</p>
+                  : [...activities].reverse().map(a => (
+                    <div key={a.id} className="flex items-start gap-2 text-[11px]">
+                      <div className="w-1.5 h-1.5 rounded-full bg-purple-400 shrink-0 mt-1" />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-white font-medium">{a.is_dispatcher ? "Dispatch" : a.session_id.slice(0,8)}</span>
+                        <span className="text-slate-400"> — {a.tool.replace(/_/g," ")}</span>
+                        {a.result?.compliance != null && <p className={String(a.result.compliance).includes("COMPLIANT") ? "text-green-400" : "text-yellow-400"}>{String(a.result.compliance)}</p>}
+                        {a.result?.safe_for_truck === false && <p className="text-red-400">⚠ Route blocked</p>}
+                        {a.result?.notifications_sent != null && <p className="text-green-400">✓ Notified</p>}
+                        {a.result?.top_drivers != null && <p className="text-blue-400">Trip plan computed</p>}
                       </div>
+                      <span className="text-slate-600 shrink-0">{a.timestamp.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",hour12:false})}</span>
                     </div>
-                  ))
-                )}
+                  ))}
               </div>
             </div>
           </div>
         </div>
-      </main>
+      </div>
 
-      {/* Dispatcher Voice Panel */}
       {showVoice && <DispatcherVoicePanel onClose={() => setShowVoice(false)} />}
     </div>
   );

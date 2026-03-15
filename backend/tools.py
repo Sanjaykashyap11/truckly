@@ -283,6 +283,32 @@ def get_dispatcher_tools() -> list:
                         required=["route_name", "action"],
                     ),
                 ),
+                types.FunctionDeclaration(
+                    name="plan_delivery",
+                    description=(
+                        "Find the best driver and calculate FMCSA-compliant earliest delivery time for a load. "
+                        "Call this when dispatcher asks who can make a delivery, when can a load be delivered, "
+                        "or which driver to assign. Uses real Samsara HOS data."
+                    ),
+                    parameters=types.Schema(
+                        type=types.Type.OBJECT,
+                        properties={
+                            "destination": types.Schema(
+                                type=types.Type.STRING,
+                                description="Destination city or address",
+                            ),
+                            "distance_miles": types.Schema(
+                                type=types.Type.NUMBER,
+                                description="Estimated driving distance in miles",
+                            ),
+                            "required_by": types.Schema(
+                                type=types.Type.STRING,
+                                description="Optional deadline in ISO format (e.g. 2026-03-15T17:00:00)",
+                            ),
+                        },
+                        required=["destination", "distance_miles"],
+                    ),
+                ),
             ]
         )
     ]
@@ -324,11 +350,12 @@ async def handle_dispatcher_tool_call(
     """Route dispatcher tool calls to handlers"""
     try:
         handlers = {
-            "get_fleet_status": lambda a, _: get_fleet_status(a, active_drivers),
+            "get_fleet_status":  lambda a, _: get_fleet_status(a, active_drivers),
             "get_driver_details": lambda a, _: get_driver_details(a, active_drivers),
-            "check_hos_status": lambda a, _: check_hos_status_fleet(a, active_drivers),
+            "check_hos_status":  lambda a, _: check_hos_status_fleet(a, active_drivers),
+            "plan_delivery":     lambda a, _: plan_delivery_tool(a, active_drivers),
             "notify_stakeholders": notify_stakeholders,
-            "handle_breakdown": handle_breakdown,
+            "handle_breakdown":  handle_breakdown,
             "check_route_safety": check_route_safety,
         }
         handler = handlers.get(tool_name)
@@ -659,3 +686,43 @@ async def check_hos_status_fleet(args: Dict, active_drivers: dict) -> Dict:
             "compliance": "COMPLIANT" if mins > 30 else "VIOLATION" if mins == 0 else "WARNING",
         })
     return {"fleet_hos": results, "data_source": "Samsara ELD"}
+
+
+async def plan_delivery_tool(args: Dict, active_drivers: dict) -> Dict:
+    """FMCSA-compliant trip planning for dispatcher — find best driver + earliest delivery"""
+    from trip_planner import rank_drivers_for_load
+    destination    = args.get("destination", "destination")
+    distance_miles = float(args.get("distance_miles", 100))
+    required_by    = args.get("required_by")
+
+    drivers = list(active_drivers.values())
+    ranked  = rank_drivers_for_load(drivers, distance_miles, required_by)
+    top3    = ranked[:3]
+
+    results = []
+    for r in top3:
+        d    = r["driver"]
+        plan = r["plan"]
+        results.append({
+            "rank": r["rank"],
+            "driver": d.get("name"),
+            "truck": d.get("truck"),
+            "current_location": d.get("current_location", {}).get("address"),
+            "hos_drive_remaining": f"{d['hos']['drive_time_remaining_mins'] // 60}h {d['hos']['drive_time_remaining_mins'] % 60}m",
+            "scenario": plan["scenario_label"],
+            "compliance": plan["compliance"],
+            "earliest_delivery": plan["earliest_display"],
+            "explanation": plan["explanation"],
+            "meets_deadline": r.get("meets_deadline"),
+            "warnings": plan["warnings"],
+        })
+
+    return {
+        "destination": destination,
+        "distance_miles": distance_miles,
+        "drive_time_estimate": f"{int(distance_miles / 55)} h {int((distance_miles % 55) / 55 * 60)} m at 55 mph",
+        "top_drivers": results,
+        "total_evaluated": len(drivers),
+        "data_source": "Samsara ELD (live HOS clocks)",
+        "recommendation": results[0] if results else "No drivers available",
+    }

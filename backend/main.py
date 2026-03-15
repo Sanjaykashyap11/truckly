@@ -20,6 +20,7 @@ from google.genai import types
 from mock_data import MOCK_ALERTS, MOCK_DRIVERS
 from tools import get_tools, get_dispatcher_tools, handle_tool_call, handle_dispatcher_tool_call
 import samsara as samsara_module
+from trip_planner import rank_drivers_for_load, generate_fleet_insights, calculate_trip_plan
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -287,8 +288,97 @@ async def api_fleet_snapshot():
         return snapshot
     return {
         "drivers": list(ACTIVE_DRIVERS.values()),
-        "violations": [],
         "source": "demo",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@app.get("/api/fleet/insights")
+async def api_fleet_insights():
+    """AI-generated proactive fleet insights from real Samsara data"""
+    drivers = list(ACTIVE_DRIVERS.values())
+    insights = generate_fleet_insights(drivers)
+    # Fleet summary stats
+    on_route   = sum(1 for d in drivers if d.get("status") == "on_route")
+    resting    = sum(1 for d in drivers if d.get("status") == "resting")
+    violations = sum(1 for d in drivers if d.get("hos", {}).get("violation"))
+    low_hos    = sum(1 for d in drivers if 0 < d.get("hos", {}).get("drive_time_remaining_mins", 999) < 120)
+    available  = sum(1 for d in drivers if d.get("hos", {}).get("drive_time_remaining_mins", 0) >= 300
+                    and d.get("status") != "on_route")
+    low_fuel   = sum(1 for d in drivers if (d.get("telemetry") or {}).get("fuel_percent") is not None
+                    and (d.get("telemetry") or {}).get("fuel_percent", 100) < 25)
+    idling     = sum(1 for d in drivers if (d.get("telemetry") or {}).get("engine_state") == "On"
+                    and d.get("status") != "on_route" and d.get("current_location", {}).get("speed_mph", 0) < 2)
+    return {
+        "insights": insights,
+        "stats": {
+            "total": len(drivers),
+            "on_route": on_route,
+            "resting": resting,
+            "available": available,
+            "violations": violations,
+            "low_hos": low_hos,
+            "low_fuel": low_fuel,
+            "idling": idling,
+        },
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@app.post("/api/trip/plan")
+async def api_trip_plan(body: dict):
+    """
+    FMCSA-compliant trip planning — find best drivers for a load.
+    Body: {destination: str, distance_miles: float, required_by?: str (ISO)}
+    """
+    destination   = body.get("destination", "")
+    distance_miles = float(body.get("distance_miles", 100))
+    required_by   = body.get("required_by")
+
+    drivers = list(ACTIVE_DRIVERS.values())
+    ranked  = rank_drivers_for_load(drivers, distance_miles, required_by)
+
+    # Attach rank metadata
+    result = []
+    for r in ranked[:15]:  # top 15
+        result.append({
+            "rank":          r["rank"],
+            "driver_id":     r["driver"]["id"],
+            "driver_name":   r["driver"]["name"],
+            "truck":         r["driver"]["truck"],
+            "status":        r["driver"]["status"],
+            "location":      r["driver"]["current_location"]["address"],
+            "speed_mph":     r["driver"]["current_location"]["speed_mph"],
+            "hos_drive_rem": r["driver"]["hos"]["drive_time_remaining_mins"],
+            "hos_shift_rem": r["driver"]["hos"]["on_duty_remaining_mins"],
+            "hos_cycle_rem": r["driver"]["hos"]["cycle_remaining_hours"],
+            "plan":          r["plan"],
+            "meets_deadline": r.get("meets_deadline"),
+        })
+
+    return {
+        "destination":    destination,
+        "distance_miles": distance_miles,
+        "required_by":    required_by,
+        "total_drivers":  len(drivers),
+        "results":        result,
+        "timestamp":      datetime.now().isoformat(),
+    }
+
+
+@app.get("/api/drivers/available")
+async def api_available_drivers():
+    """Drivers available for new loads right now (300+ min HOS, not on route)"""
+    drivers = list(ACTIVE_DRIVERS.values())
+    available = [
+        d for d in drivers
+        if d.get("hos", {}).get("drive_time_remaining_mins", 0) >= 300
+        and d.get("status") not in ("on_route",)
+    ]
+    available.sort(key=lambda d: d["hos"]["drive_time_remaining_mins"], reverse=True)
+    return {
+        "count": len(available),
+        "drivers": available,
         "timestamp": datetime.now().isoformat(),
     }
 
