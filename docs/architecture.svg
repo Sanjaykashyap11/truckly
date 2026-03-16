@@ -1,288 +1,135 @@
-<svg viewBox="0 0 1400 920" xmlns="http://www.w3.org/2000/svg" style="background:#050508;font-family:Inter,system-ui,sans-serif">
-  <defs>
-    <linearGradient id="blue" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#3b82f6"/>
-      <stop offset="100%" style="stop-color:#6366f1"/>
-    </linearGradient>
-    <linearGradient id="green" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#10b981"/>
-      <stop offset="100%" style="stop-color:#059669"/>
-    </linearGradient>
-    <linearGradient id="orange" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#f59e0b"/>
-      <stop offset="100%" style="stop-color:#ea580c"/>
-    </linearGradient>
-    <linearGradient id="purple" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#8b5cf6"/>
-      <stop offset="100%" style="stop-color:#6366f1"/>
-    </linearGradient>
-    <linearGradient id="gcpGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#1a1a2e"/>
-      <stop offset="100%" style="stop-color:#0d1117"/>
-    </linearGradient>
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="3" result="blur"/>
-      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
-    <marker id="arrow-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-      <path d="M0,0 L8,3 L0,6 Z" fill="#3b82f6"/>
-    </marker>
-    <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-      <path d="M0,0 L8,3 L0,6 Z" fill="#10b981"/>
-    </marker>
-    <marker id="arrow-orange" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-      <path d="M0,0 L8,3 L0,6 Z" fill="#f59e0b"/>
-    </marker>
-    <marker id="arrow-purple" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-      <path d="M0,0 L8,3 L0,6 Z" fill="#a78bfa"/>
-    </marker>
-  </defs>
+<svg viewBox="0 0 900 560" xmlns="http://www.w3.org/2000/svg" style="background:#ffffff;font-family:'Google Sans',Roboto,Arial,sans-serif">
 
-  <!-- Background grid -->
-  <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-    <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255,255,255,0.025)" stroke-width="1"/>
-  </pattern>
-  <rect width="1400" height="920" fill="url(#grid)"/>
+  <!-- Background -->
+  <rect width="900" height="560" fill="#ffffff"/>
 
-  <!-- ── Title ── -->
-  <text x="700" y="46" text-anchor="middle" font-size="22" font-weight="800" fill="white" letter-spacing="-0.5">Trucky — AI-Native Fleet OS</text>
-  <text x="700" y="68" text-anchor="middle" font-size="12" fill="#6b7280" letter-spacing="2">SYSTEM ARCHITECTURE · GEMINI LIVE AGENT HACKATHON</text>
+  <!-- Title -->
+  <text x="450" y="38" text-anchor="middle" font-size="18" font-weight="700" fill="#202124">Trucky — System Architecture</text>
+  <text x="450" y="56" text-anchor="middle" font-size="11" fill="#5f6368">Built on Google Cloud · Gemini 2.5 Flash Native Audio · Samsara ELD</text>
 
-  <!-- ═══════════════════════════════════════════════════
-       COLUMN 1 — USERS (left)
-  ═══════════════════════════════════════════════════ -->
+  <!-- ─── COLUMN 1: Clients ─── -->
+  <!-- Dispatcher box -->
+  <rect x="30" y="90" width="160" height="76" rx="8" fill="#e8f0fe" stroke="#4285f4" stroke-width="1.5"/>
+  <text x="110" y="115" text-anchor="middle" font-size="12" font-weight="600" fill="#1a73e8">Dispatcher TMS</text>
+  <text x="110" y="132" text-anchor="middle" font-size="10" fill="#3c4043">Next.js 15 · Web Audio API</text>
+  <text x="110" y="148" text-anchor="middle" font-size="10" fill="#3c4043">Vercel · trucky-ai.vercel.app</text>
 
-  <!-- Dispatcher Browser box -->
-  <rect x="30" y="120" width="220" height="180" rx="14" fill="rgba(255,255,255,0.03)" stroke="rgba(99,102,241,0.5)" stroke-width="1.5"/>
-  <rect x="30" y="120" width="220" height="4" rx="2" fill="url(#purple)"/>
-  <text x="140" y="150" text-anchor="middle" font-size="22">🖥️</text>
-  <text x="140" y="174" text-anchor="middle" font-size="13" font-weight="700" fill="white">Dispatcher TMS</text>
-  <text x="140" y="192" text-anchor="middle" font-size="11" fill="#6b7280">Next.js 15 · TypeScript</text>
-  <rect x="46" y="204" width="188" height="1" fill="rgba(255,255,255,0.06)"/>
-  <text x="56" y="222" font-size="10" fill="#94a3b8">▸ Voice AI panel (Trucky)</text>
-  <text x="56" y="238" font-size="10" fill="#94a3b8">▸ Live TMS load board</text>
-  <text x="56" y="254" font-size="10" fill="#94a3b8">▸ Real-time ELD fleet map</text>
-  <text x="56" y="270" font-size="10" fill="#94a3b8">▸ Driver messaging hub</text>
-  <text x="140" y="294" text-anchor="middle" font-size="10" fill="#6366f1" font-weight="600">Port 3000</text>
+  <!-- Driver box -->
+  <rect x="30" y="196" width="160" height="76" rx="8" fill="#e8f0fe" stroke="#4285f4" stroke-width="1.5"/>
+  <text x="110" y="221" text-anchor="middle" font-size="12" font-weight="600" fill="#1a73e8">Driver Co-Pilot</text>
+  <text x="110" y="238" text-anchor="middle" font-size="10" fill="#3c4043">Next.js 15 · Web Audio API</text>
+  <text x="110" y="254" text-anchor="middle" font-size="10" fill="#3c4043">PCM16 · 16 kHz mic input</text>
 
-  <!-- Driver Browser box -->
-  <rect x="30" y="360" width="220" height="180" rx="14" fill="rgba(255,255,255,0.03)" stroke="rgba(16,185,129,0.5)" stroke-width="1.5"/>
-  <rect x="30" y="360" width="220" height="4" rx="2" fill="url(#green)"/>
-  <text x="140" y="390" text-anchor="middle" font-size="22">📱</text>
-  <text x="140" y="414" text-anchor="middle" font-size="13" font-weight="700" fill="white">Driver App</text>
-  <text x="140" y="432" text-anchor="middle" font-size="11" fill="#6b7280">Next.js 15 · Web Audio API</text>
-  <rect x="46" y="444" width="188" height="1" fill="rgba(255,255,255,0.06)"/>
-  <text x="56" y="462" font-size="10" fill="#94a3b8">▸ Voice co-pilot (Trucky AI)</text>
-  <text x="56" y="478" font-size="10" fill="#94a3b8">▸ Tap-to-talk interface</text>
-  <text x="56" y="494" font-size="10" fill="#94a3b8">▸ Live load assignments</text>
-  <text x="56" y="510" font-size="10" fill="#94a3b8">▸ HOS &amp; fatigue alerts</text>
-  <text x="140" y="534" text-anchor="middle" font-size="10" fill="#10b981" font-weight="600">PCM16 · 16kHz → 24kHz</text>
+  <!-- ─── COLUMN 2: GCP Backend ─── -->
+  <!-- GCP container -->
+  <rect x="245" y="72" width="390" height="384" rx="10" fill="#f8f9fa" stroke="#dadce0" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="440" y="92" text-anchor="middle" font-size="10" font-weight="600" fill="#5f6368" letter-spacing="0.5">GOOGLE CLOUD PLATFORM</text>
 
-  <!-- JY Carriers label -->
-  <rect x="30" y="590" width="220" height="60" rx="10" fill="rgba(245,158,11,0.06)" stroke="rgba(245,158,11,0.3)" stroke-width="1"/>
-  <text x="140" y="614" text-anchor="middle" font-size="11" font-weight="700" fill="#f59e0b">🏢 JY Carriers</text>
-  <text x="140" y="632" text-anchor="middle" font-size="10" fill="#94a3b8">Real fleet data partner</text>
-  <text x="140" y="647" text-anchor="middle" font-size="10" fill="#6b7280">49 active Samsara ELD drivers</text>
+  <!-- Cloud Run box -->
+  <rect x="265" y="104" width="350" height="52" rx="8" fill="#fff8e1" stroke="#fbbc04" stroke-width="1.5"/>
+  <text x="440" y="125" text-anchor="middle" font-size="12" font-weight="600" fill="#e37400">Cloud Run · FastAPI Backend</text>
+  <text x="440" y="143" text-anchor="middle" font-size="10" fill="#3c4043">Python 3.12 · uvicorn · WebSocket · timeout 3600s · 1 Gi RAM</text>
 
-  <!-- ═══════════════════════════════════════════════════
-       COLUMN 2 — GCP CLOUD RUN BACKEND (center)
-  ═══════════════════════════════════════════════════ -->
+  <!-- Gemini Live box -->
+  <rect x="265" y="180" width="160" height="80" rx="8" fill="#e6f4ea" stroke="#34a853" stroke-width="1.5"/>
+  <text x="345" y="202" text-anchor="middle" font-size="11" font-weight="600" fill="#1e8e3e">Gemini Live API</text>
+  <text x="345" y="218" text-anchor="middle" font-size="10" fill="#3c4043">gemini-2.5-flash</text>
+  <text x="345" y="233" text-anchor="middle" font-size="10" fill="#3c4043">native-audio-latest</text>
+  <text x="345" y="248" text-anchor="middle" font-size="10" fill="#3c4043">Bidirectional · Native Audio</text>
 
-  <!-- GCP container outline -->
-  <rect x="300" y="95" width="680" height="720" rx="20" fill="rgba(255,255,255,0.015)" stroke="rgba(59,130,246,0.2)" stroke-width="1.5" stroke-dasharray="6,4"/>
-  <rect x="380" y="85" width="200" height="24" rx="6" fill="#1e1e2e"/>
-  <text x="480" y="101" text-anchor="middle" font-size="11" font-weight="700" fill="#4d94ff" letter-spacing="1">☁️ GOOGLE CLOUD RUN</text>
+  <!-- Tool Handlers box -->
+  <rect x="455" y="180" width="160" height="80" rx="8" fill="#fce8e6" stroke="#ea4335" stroke-width="1.5"/>
+  <text x="535" y="202" text-anchor="middle" font-size="11" font-weight="600" fill="#c5221f">Tool Handlers</text>
+  <text x="535" y="218" text-anchor="middle" font-size="10" fill="#3c4043">manage_load · plan_trip</text>
+  <text x="535" y="233" text-anchor="middle" font-size="10" fill="#3c4043">check_hos · find_fuel</text>
+  <text x="535" y="248" text-anchor="middle" font-size="10" fill="#3c4043">handle_breakdown · msg</text>
 
-  <!-- FastAPI Backend header -->
-  <rect x="320" y="118" width="640" height="50" rx="10" fill="rgba(59,130,246,0.08)" stroke="rgba(59,130,246,0.25)" stroke-width="1"/>
-  <text x="640" y="140" text-anchor="middle" font-size="14" font-weight="800" fill="white">FastAPI Backend · Python 3.12</text>
-  <text x="640" y="158" text-anchor="middle" font-size="10" fill="#6b7280">uvicorn · WebSockets · async/await · Port 8080</text>
+  <!-- Shared State box -->
+  <rect x="265" y="284" width="160" height="64" rx="8" fill="#f3e8fd" stroke="#9334e6" stroke-width="1.5"/>
+  <text x="345" y="306" text-anchor="middle" font-size="11" font-weight="600" fill="#7627bb">Shared State</text>
+  <text x="345" y="322" text-anchor="middle" font-size="10" fill="#3c4043">LOADS · MESSAGES</text>
+  <text x="345" y="338" text-anchor="middle" font-size="10" fill="#3c4043">broadcast() · state.py</text>
 
-  <!-- Gemini Live Bridge -->
-  <rect x="320" y="186" width="300" height="200" rx="12" fill="rgba(99,102,241,0.07)" stroke="rgba(99,102,241,0.35)" stroke-width="1.5"/>
-  <rect x="320" y="186" width="300" height="4" rx="2" fill="url(#blue)"/>
-  <text x="470" y="212" text-anchor="middle" font-size="12" font-weight="700" fill="white">Gemini Live Bridge</text>
-  <text x="470" y="228" text-anchor="middle" font-size="10" fill="#6b7280">google-genai SDK · v1alpha</text>
-  <rect x="336" y="237" width="268" height="1" fill="rgba(255,255,255,0.06)"/>
-  <text x="340" y="255" font-size="10" fill="#94a3b8">▸ Bidirectional audio streaming</text>
-  <text x="340" y="271" font-size="10" fill="#94a3b8">▸ Gemini 2.5 Flash Native Audio</text>
-  <text x="340" y="287" font-size="10" fill="#94a3b8">▸ Function calling (tool dispatch)</text>
-  <text x="340" y="303" font-size="10" fill="#94a3b8">▸ English-only ASR (en-US)</text>
-  <text x="340" y="319" font-size="10" fill="#94a3b8">▸ Input + output transcription</text>
-  <text x="340" y="335" font-size="10" fill="#94a3b8">▸ Auto-reconnect on error 1011/1006</text>
-  <text x="340" y="354" font-size="10" fill="#94a3b8">▸ System prompt w/ live driver context</text>
-  <text x="470" y="376" text-anchor="middle" font-size="10" fill="#6366f1" font-weight="600">WebSocket /ws/voice/{driver_id}</text>
+  <!-- Trip Planner box -->
+  <rect x="455" y="284" width="160" height="64" rx="8" fill="#fff8e1" stroke="#fbbc04" stroke-width="1.5"/>
+  <text x="535" y="306" text-anchor="middle" font-size="11" font-weight="600" fill="#e37400">Trip Planner</text>
+  <text x="535" y="322" text-anchor="middle" font-size="10" fill="#3c4043">FMCSA HOS routing</text>
+  <text x="535" y="338" text-anchor="middle" font-size="10" fill="#3c4043">OSRM · Nominatim</text>
 
-  <!-- Shared State -->
-  <rect x="640" y="186" width="300" height="100" rx="12" fill="rgba(16,185,129,0.06)" stroke="rgba(16,185,129,0.3)" stroke-width="1.5"/>
-  <text x="790" y="210" text-anchor="middle" font-size="12" font-weight="700" fill="white">Shared State · state.py</text>
-  <text x="790" y="226" text-anchor="middle" font-size="10" fill="#6b7280">In-process mutable state</text>
-  <rect x="656" y="234" width="268" height="1" fill="rgba(255,255,255,0.06)"/>
-  <text x="660" y="251" font-size="10" fill="#94a3b8">▸ LOADS[] — live load board</text>
-  <text x="660" y="267" font-size="10" fill="#94a3b8">▸ MESSAGES[] — driver↔dispatcher</text>
-  <text x="660" y="283" font-size="10" fill="#94a3b8">▸ broadcast() — WebSocket fan-out</text>
+  <!-- Cloud Build box -->
+  <rect x="265" y="372" width="350" height="44" rx="8" fill="#e8f0fe" stroke="#4285f4" stroke-width="1.5"/>
+  <text x="440" y="391" text-anchor="middle" font-size="11" font-weight="600" fill="#1a73e8">Cloud Build — CI/CD (cloudbuild.yaml)</text>
+  <text x="440" y="408" text-anchor="middle" font-size="10" fill="#3c4043">Docker → Container Registry → Cloud Run auto-deploy</text>
 
-  <!-- Tool Handlers -->
-  <rect x="320" y="404" width="300" height="270" rx="12" fill="rgba(245,158,11,0.05)" stroke="rgba(245,158,11,0.3)" stroke-width="1.5"/>
-  <rect x="320" y="404" width="300" height="4" rx="2" fill="url(#orange)"/>
-  <text x="470" y="430" text-anchor="middle" font-size="12" font-weight="700" fill="white">Tool Handlers · tools.py</text>
-  <text x="470" y="447" text-anchor="middle" font-size="10" fill="#6b7280">Gemini function calling execution</text>
-  <rect x="336" y="455" width="268" height="1" fill="rgba(255,255,255,0.06)"/>
-  <text x="340" y="473" font-size="10" fill="#f59e0b" font-weight="600">▸ create_load</text>
-  <text x="460" y="473" font-size="10" fill="#6b7280">— voice → TMS load board</text>
-  <text x="340" y="490" font-size="10" fill="#f59e0b" font-weight="600">▸ assign_load</text>
-  <text x="460" y="490" font-size="10" fill="#6b7280">— driver assignment by name</text>
-  <text x="340" y="507" font-size="10" fill="#f59e0b" font-weight="600">▸ get_my_loads</text>
-  <text x="460" y="507" font-size="10" fill="#6b7280">— live load lookup for driver</text>
-  <text x="340" y="524" font-size="10" fill="#f59e0b" font-weight="600">▸ send_message_to_dispatcher</text>
-  <text x="340" y="540" font-size="10" fill="#6b7280">  driver → dispatcher alerts</text>
-  <text x="340" y="557" font-size="10" fill="#f59e0b" font-weight="600">▸ send_message_to_driver</text>
-  <text x="340" y="573" font-size="10" fill="#6b7280">  dispatcher → driver messages</text>
-  <text x="340" y="590" font-size="10" fill="#f59e0b" font-weight="600">▸ check_hos_status</text>
-  <text x="460" y="590" font-size="10" fill="#6b7280">— live FMCSA HOS rules</text>
-  <text x="340" y="607" font-size="10" fill="#f59e0b" font-weight="600">▸ check_route_safety</text>
-  <text x="460" y="607" font-size="10" fill="#6b7280">— bridge/parkway DB</text>
-  <text x="340" y="624" font-size="10" fill="#f59e0b" font-weight="600">▸ plan_trip</text>
-  <text x="460" y="624" font-size="10" fill="#6b7280">— FMCSA-compliant routing</text>
-  <text x="340" y="641" font-size="10" fill="#f59e0b" font-weight="600">▸ find_fuel_stops</text>
-  <text x="460" y="641" font-size="10" fill="#6b7280">— cheapest diesel on route</text>
-  <text x="340" y="658" font-size="10" fill="#f59e0b" font-weight="600">▸ handle_breakdown</text>
-  <text x="460" y="658" font-size="10" fill="#6b7280">— emergency protocol</text>
+  <!-- ─── COLUMN 3: External APIs ─── -->
+  <!-- Samsara box -->
+  <rect x="695" y="140" width="170" height="80" rx="8" fill="#e8f0fe" stroke="#4285f4" stroke-width="1.5"/>
+  <text x="780" y="162" text-anchor="middle" font-size="12" font-weight="600" fill="#1a73e8">Samsara ELD API</text>
+  <text x="780" y="178" text-anchor="middle" font-size="10" fill="#3c4043">49 live drivers · JY Carriers</text>
+  <text x="780" y="194" text-anchor="middle" font-size="10" fill="#3c4043">GPS · HOS · fuel · engine</text>
+  <text x="780" y="210" text-anchor="middle" font-size="10" fill="#3c4043">30s refresh · HTTPS</text>
 
-  <!-- Samsara ELD Integration -->
-  <rect x="640" y="304" width="300" height="160" rx="12" fill="rgba(16,185,129,0.06)" stroke="rgba(16,185,129,0.3)" stroke-width="1.5"/>
-  <text x="790" y="328" text-anchor="middle" font-size="12" font-weight="700" fill="white">Samsara ELD Integration</text>
-  <text x="790" y="344" text-anchor="middle" font-size="10" fill="#6b7280">samsara.py · httpx async</text>
-  <rect x="656" y="352" width="268" height="1" fill="rgba(255,255,255,0.06)"/>
-  <text x="660" y="370" font-size="10" fill="#94a3b8">▸ /fleet/hos/clocks — real HOS per driver</text>
-  <text x="660" y="386" font-size="10" fill="#94a3b8">▸ /fleet/vehicles/stats?gps — live GPS</text>
-  <text x="660" y="402" font-size="10" fill="#94a3b8">▸ engineStates, fuelPercents, odometer</text>
-  <text x="660" y="418" font-size="10" fill="#94a3b8">▸ 49 active drivers · JY Carriers fleet</text>
-  <text x="660" y="434" font-size="10" fill="#10b981" font-weight="600">▸ 7-day refill history · anomaly filter</text>
-  <text x="660" y="452" font-size="10" fill="#6b7280">Bearer token auth · rate-limited</text>
+  <!-- OSRM box -->
+  <rect x="695" y="244" width="170" height="64" rx="8" fill="#e6f4ea" stroke="#34a853" stroke-width="1.5"/>
+  <text x="780" y="266" text-anchor="middle" font-size="12" font-weight="600" fill="#1e8e3e">OSRM + Nominatim</text>
+  <text x="780" y="282" text-anchor="middle" font-size="10" fill="#3c4043">Truck routing (no API key)</text>
+  <text x="780" y="298" text-anchor="middle" font-size="10" fill="#3c4043">HOS-aware waypoints</text>
 
-  <!-- Trip Planner -->
-  <rect x="640" y="480" width="300" height="130" rx="12" fill="rgba(139,92,246,0.06)" stroke="rgba(139,92,246,0.3)" stroke-width="1.5"/>
-  <text x="790" y="504" text-anchor="middle" font-size="12" font-weight="700" fill="white">Trip Planner · trip_planner.py</text>
-  <text x="790" y="520" text-anchor="middle" font-size="10" fill="#6b7280">FMCSA HOS-aware routing</text>
-  <rect x="656" y="528" width="268" height="1" fill="rgba(255,255,255,0.06)"/>
-  <text x="660" y="546" font-size="10" fill="#94a3b8">▸ OSRM — open-source routing engine</text>
-  <text x="660" y="562" font-size="10" fill="#94a3b8">▸ Nominatim — address geocoding</text>
-  <text x="660" y="578" font-size="10" fill="#94a3b8">▸ 11h drive / 14h shift / 70h cycle</text>
-  <text x="660" y="594" font-size="10" fill="#a78bfa" font-weight="600">▸ Earliest legal delivery calculation</text>
+  <!-- ─── ARROWS ─── -->
 
-  <!-- REST endpoints -->
-  <rect x="640" y="626" width="300" height="100" rx="12" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
-  <text x="790" y="650" text-anchor="middle" font-size="12" font-weight="700" fill="white">REST API Endpoints</text>
-  <rect x="656" y="658" width="268" height="1" fill="rgba(255,255,255,0.06)"/>
-  <text x="660" y="675" font-size="10" fill="#94a3b8">GET /api/drivers  ·  GET /api/loads</text>
-  <text x="660" y="691" font-size="10" fill="#94a3b8">GET /api/messages  ·  GET /health</text>
-  <text x="660" y="707" font-size="10" fill="#94a3b8">WS /ws/dispatcher  ·  WS /ws/voice/{id}</text>
-  <text x="790" y="722" text-anchor="middle" font-size="10" fill="#6b7280">Cloud Build CI/CD · cloudbuild.yaml</text>
+  <!-- Dispatcher ↔ Backend (WebSocket) -->
+  <line x1="190" y1="120" x2="245" y2="138" stroke="#4285f4" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="245" y1="134" x2="190" y2="120" stroke="#4285f4" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="218" y="118" text-anchor="middle" font-size="9" fill="#4285f4">WSS</text>
 
-  <!-- ═══════════════════════════════════════════════════
-       COLUMN 3 — EXTERNAL APIs (right)
-  ═══════════════════════════════════════════════════ -->
+  <!-- Driver ↔ Backend (PCM16) -->
+  <line x1="190" y1="234" x2="245" y2="200" stroke="#4285f4" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="245" y1="204" x2="190" y2="238" stroke="#4285f4" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="218" y="226" text-anchor="middle" font-size="9" fill="#4285f4">PCM16</text>
 
-  <!-- Gemini Live API -->
-  <rect x="1040" y="120" width="320" height="180" rx="14" fill="rgba(59,130,246,0.06)" stroke="rgba(59,130,246,0.4)" stroke-width="1.5"/>
-  <rect x="1040" y="120" width="320" height="4" rx="2" fill="url(#blue)"/>
-  <text x="1200" y="148" text-anchor="middle" font-size="20">🤖</text>
-  <text x="1200" y="170" text-anchor="middle" font-size="13" font-weight="700" fill="white">Gemini 2.5 Flash</text>
-  <text x="1200" y="188" text-anchor="middle" font-size="11" fill="#6b7280">Native Audio · Live API</text>
-  <rect x="1056" y="197" width="288" height="1" fill="rgba(255,255,255,0.06)"/>
-  <text x="1060" y="214" font-size="10" fill="#94a3b8">▸ Bidirectional audio (WebSocket)</text>
-  <text x="1060" y="230" font-size="10" fill="#94a3b8">▸ Natural interruption handling</text>
-  <text x="1060" y="246" font-size="10" fill="#94a3b8">▸ Function calling (mid-conversation)</text>
-  <text x="1060" y="262" font-size="10" fill="#94a3b8">▸ Input + output transcription</text>
-  <text x="1200" y="290" text-anchor="middle" font-size="10" fill="#3b82f6" font-weight="600">Google AI Studio · Vertex AI</text>
+  <!-- Cloud Run ↔ Gemini -->
+  <line x1="345" y1="156" x2="345" y2="180" stroke="#34a853" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="355" y1="180" x2="355" y2="156" stroke="#34a853" stroke-width="1.5" marker-end="url(#arr)"/>
 
-  <!-- Samsara API -->
-  <rect x="1040" y="330" width="320" height="160" rx="14" fill="rgba(16,185,129,0.06)" stroke="rgba(16,185,129,0.4)" stroke-width="1.5"/>
-  <rect x="1040" y="330" width="320" height="4" rx="2" fill="url(#green)"/>
-  <text x="1200" y="358" text-anchor="middle" font-size="20">📡</text>
-  <text x="1200" y="378" text-anchor="middle" font-size="13" font-weight="700" fill="white">Samsara ELD API</text>
-  <text x="1200" y="396" text-anchor="middle" font-size="11" fill="#6b7280">JY Carriers · Real fleet data</text>
-  <rect x="1056" y="404" width="288" height="1" fill="rgba(255,255,255,0.06)"/>
-  <text x="1060" y="421" font-size="10" fill="#94a3b8">▸ 49 live drivers · GPS positions</text>
-  <text x="1060" y="437" font-size="10" fill="#94a3b8">▸ HOS clocks · remaining hours</text>
-  <text x="1060" y="453" font-size="10" fill="#94a3b8">▸ Fuel %, engine state, odometer</text>
-  <text x="1060" y="469" font-size="10" fill="#94a3b8">▸ 7-day refill telemetry history</text>
-  <text x="1200" y="482" text-anchor="middle" font-size="10" fill="#10b981" font-weight="600">api.samsara.com · Bearer auth</text>
-
-  <!-- OSRM + Nominatim -->
-  <rect x="1040" y="516" width="320" height="130" rx="14" fill="rgba(139,92,246,0.06)" stroke="rgba(139,92,246,0.4)" stroke-width="1.5"/>
-  <rect x="1040" y="516" width="320" height="4" rx="2" fill="url(#purple)"/>
-  <text x="1200" y="544" text-anchor="middle" font-size="20">🗺️</text>
-  <text x="1200" y="563" text-anchor="middle" font-size="13" font-weight="700" fill="white">Routing &amp; Geocoding</text>
-  <text x="1200" y="580" text-anchor="middle" font-size="11" fill="#6b7280">Open-source · No rate limits</text>
-  <rect x="1056" y="588" width="288" height="1" fill="rgba(255,255,255,0.06)"/>
-  <text x="1060" y="606" font-size="10" fill="#94a3b8">▸ OSRM — driving distance &amp; time</text>
-  <text x="1060" y="622" font-size="10" fill="#94a3b8">▸ Nominatim — address → coordinates</text>
-  <text x="1060" y="638" font-size="10" fill="#a78bfa" font-weight="600">▸ truck-safe routing profiles</text>
-
-  <!-- Cloud Build / Container Registry -->
-  <rect x="1040" y="672" width="320" height="100" rx="14" fill="rgba(255,255,255,0.025)" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
-  <text x="1200" y="698" text-anchor="middle" font-size="12" font-weight="700" fill="white">☁️ GCP Services</text>
-  <rect x="1056" y="706" width="288" height="1" fill="rgba(255,255,255,0.06)"/>
-  <text x="1060" y="723" font-size="10" fill="#94a3b8">▸ Cloud Run — serverless backend host</text>
-  <text x="1060" y="739" font-size="10" fill="#94a3b8">▸ Cloud Build — automated CI/CD</text>
-  <text x="1060" y="755" font-size="10" fill="#94a3b8">▸ Container Registry — Docker images</text>
-
-  <!-- ═══════════════════════════════════════════════════
-       CONNECTION LINES
-  ═══════════════════════════════════════════════════ -->
-
-  <!-- Dispatcher → Backend (WebSocket) -->
-  <path d="M 250 210 L 320 210" stroke="#6366f1" stroke-width="1.5" fill="none" marker-end="url(#arrow-blue)" opacity="0.8"/>
-  <text x="275" y="205" font-size="9" fill="#6366f1" text-anchor="middle">WS + REST</text>
-
-  <!-- Driver → Backend (WebSocket + Audio) -->
-  <path d="M 250 450 L 320 380" stroke="#10b981" stroke-width="1.5" fill="none" marker-end="url(#arrow-green)" opacity="0.8"/>
-  <text x="265" y="425" font-size="9" fill="#10b981" text-anchor="middle">PCM16 audio</text>
-
-  <!-- Backend → Gemini Live (bidirectional audio) -->
-  <path d="M 960 210 L 1040 210" stroke="#3b82f6" stroke-width="2" fill="none" marker-end="url(#arrow-blue)" opacity="0.9"/>
-  <path d="M 1040 230 L 960 230" stroke="#6366f1" stroke-width="1.5" stroke-dasharray="4,3" fill="none" marker-end="url(#arrow-blue)" opacity="0.6"/>
-  <text x="1000" y="205" font-size="9" fill="#3b82f6" text-anchor="middle">audio stream</text>
-  <text x="1000" y="245" font-size="9" fill="#6366f1" text-anchor="middle">function calls</text>
-
-  <!-- Backend → Samsara -->
-  <path d="M 960 390 L 1040 410" stroke="#10b981" stroke-width="1.5" fill="none" marker-end="url(#arrow-green)" opacity="0.8"/>
-  <text x="1000" y="395" font-size="9" fill="#10b981" text-anchor="middle">HTTPS polling</text>
-
-  <!-- Backend → OSRM/Nominatim -->
-  <path d="M 960 560 L 1040 570" stroke="#a78bfa" stroke-width="1.5" fill="none" marker-end="url(#arrow-purple)" opacity="0.8"/>
-  <text x="1000" y="555" font-size="9" fill="#a78bfa" text-anchor="middle">HTTP routes</text>
-
-  <!-- Gemini Bridge → Tool Handlers -->
-  <path d="M 470 386 L 470 404" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#arrow-orange)" opacity="0.8"/>
-  <text x="490" y="398" font-size="9" fill="#f59e0b">invoke</text>
+  <!-- Gemini ↔ Tool Handlers -->
+  <line x1="425" y1="220" x2="455" y2="220" stroke="#ea4335" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="455" y1="228" x2="425" y2="228" stroke="#ea4335" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="440" y="213" text-anchor="middle" font-size="9" fill="#ea4335">fn calls</text>
 
   <!-- Tool Handlers → Shared State -->
-  <path d="M 620 450 L 640 350" stroke="#10b981" stroke-width="1.5" stroke-dasharray="4,3" fill="none" marker-end="url(#arrow-green)" opacity="0.7"/>
+  <line x1="490" y1="260" x2="400" y2="284" stroke="#9334e6" stroke-width="1.5" marker-end="url(#arr)"/>
 
-  <!-- ═══════════════════════════════════════════════════
-       LEGEND
-  ═══════════════════════════════════════════════════ -->
-  <rect x="30" y="790" width="640" height="100" rx="12" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
-  <text x="50" y="812" font-size="11" font-weight="700" fill="#6b7280" letter-spacing="2">LEGEND</text>
-  <line x1="50" y1="824" x2="100" y2="824" stroke="#3b82f6" stroke-width="2"/>
-  <text x="108" y="828" font-size="10" fill="#94a3b8">WebSocket / Audio Stream</text>
-  <line x1="200" y1="824" x2="250" y2="824" stroke="#10b981" stroke-width="2"/>
-  <text x="258" y="828" font-size="10" fill="#94a3b8">Samsara ELD API</text>
-  <line x1="350" y1="824" x2="400" y2="824" stroke="#f59e0b" stroke-width="2"/>
-  <text x="408" y="828" font-size="10" fill="#94a3b8">Tool Execution</text>
-  <line x1="490" y1="824" x2="540" y2="824" stroke="#a78bfa" stroke-width="2" stroke-dasharray="4,3"/>
-  <text x="548" y="828" font-size="10" fill="#94a3b8">Routing API</text>
-  <text x="50" y="852" font-size="10" fill="#6b7280">Voice flow: Browser mic (16kHz PCM16) → FastAPI → Gemini Live API → FastAPI → Browser speaker (24kHz PCM16)</text>
-  <text x="50" y="869" font-size="10" fill="#6b7280">All state is shared in-process via state.py to eliminate module-split race conditions between tool handlers and REST endpoints</text>
-  <text x="50" y="886" font-size="10" fill="#6b7280">Real ELD data from JY Carriers (49 drivers) via Samsara API · Gemini 2.5 Flash Native Audio for natural voice interruption</text>
+  <!-- Gemini → Shared State -->
+  <line x1="345" y1="260" x2="345" y2="284" stroke="#9334e6" stroke-width="1.5" marker-end="url(#arr)"/>
 
-  <!-- Hackathon badge -->
-  <rect x="700" y="798" width="670" height="90" rx="12" fill="rgba(59,130,246,0.05)" stroke="rgba(59,130,246,0.2)" stroke-width="1"/>
-  <text x="1035" y="822" text-anchor="middle" font-size="12" font-weight="700" fill="white">Gemini Live Agent Hackathon · Live Agents Category</text>
-  <text x="1035" y="842" text-anchor="middle" font-size="10" fill="#6b7280">Google GenAI SDK · Cloud Run · Cloud Build · #GeminiLiveAgentChallenge</text>
-  <text x="1035" y="862" text-anchor="middle" font-size="10" fill="#4d94ff">github.com/Sanjaykashyap11/truckly</text>
-  <text x="1035" y="879" text-anchor="middle" font-size="10" fill="#6b7280">Submission deadline: March 16, 2026</text>
+  <!-- Tool Handlers → Trip Planner -->
+  <line x1="535" y1="260" x2="535" y2="284" stroke="#e37400" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Backend → Samsara -->
+  <line x1="615" y1="156" x2="695" y2="170" stroke="#4285f4" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="695" y1="178" x2="615" y2="164" stroke="#4285f4" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Trip Planner → OSRM -->
+  <line x1="615" y1="310" x2="695" y2="276" stroke="#34a853" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ─── Legend ─── -->
+  <rect x="30" y="470" width="840" height="70" rx="8" fill="#f8f9fa" stroke="#dadce0" stroke-width="1"/>
+  <text x="50" y="490" font-size="10" font-weight="600" fill="#5f6368">GOOGLE SERVICES USED</text>
+  <rect x="50" y="500" width="10" height="10" rx="2" fill="#fbbc04"/>
+  <text x="66" y="510" font-size="10" fill="#3c4043">Cloud Run (backend hosting)</text>
+  <rect x="210" y="500" width="10" height="10" rx="2" fill="#4285f4"/>
+  <text x="226" y="510" font-size="10" fill="#3c4043">Cloud Build (CI/CD)</text>
+  <rect x="360" y="500" width="10" height="10" rx="2" fill="#34a853"/>
+  <text x="376" y="510" font-size="10" fill="#3c4043">Gemini 2.5 Flash Native Audio (Live API)</text>
+  <rect x="590" y="500" width="10" height="10" rx="2" fill="#9334e6"/>
+  <text x="606" y="510" font-size="10" fill="#3c4043">Container Registry</text>
+  <rect x="730" y="500" width="10" height="10" rx="2" fill="#ea4335"/>
+  <text x="746" y="510" font-size="10" fill="#3c4043">Vertex AI (auth fallback)</text>
+
+  <!-- Arrow marker -->
+  <defs>
+    <marker id="arr" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#5f6368"/>
+    </marker>
+  </defs>
 </svg>
