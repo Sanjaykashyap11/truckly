@@ -998,12 +998,8 @@ async def run_voice_session(
                                                 "type": "audio",
                                                 "data": base64.b64encode(part.inline_data.data).decode(),
                                             }))
-                                        elif part.text:
-                                            await websocket.send_text(json.dumps({
-                                                "type": "transcript",
-                                                "text": part.text,
-                                                "speaker": "trucky",
-                                            }))
+                                        # part.text is skipped — output_transcription handles Trucky's transcript
+                                        # to avoid duplicate bubbles in native audio mode
 
                                 if sc.turn_complete:
                                     # Flush any unsent transcript buffers on turn end

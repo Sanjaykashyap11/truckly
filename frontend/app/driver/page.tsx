@@ -291,7 +291,8 @@ function DriverSession({ driverId }: { driverId: string }) {
               } else {
                 setTranscripts(p => {
                   const last = p[p.length - 1];
-                  if (msg.partial && last?.speaker === "driver") {
+                  // Always replace last driver bubble (handles both partial and final transcripts)
+                  if (last?.speaker === "driver") {
                     return [...p.slice(0, -1), { ...last, text: msg.text }];
                   }
                   return [...p, { id: Date.now().toString(), speaker: spk, text: msg.text, timestamp: new Date() }];
