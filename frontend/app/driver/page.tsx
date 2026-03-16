@@ -191,7 +191,12 @@ function DriverSession({ driverId }: { driverId: string }) {
   const streamRef       = useRef<MediaStream | null>(null);
   const audioCtxRef     = useRef<AudioContext | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
-  const truckyTurnDoneRef = useRef(true);
+  const truckyBufRef     = useRef("");
+  const truckyTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const userBufRef       = useRef("");
+  const userTimerRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Dedup: suppress identical text shown within 8 seconds (backend sometimes sends twice)
+  const lastShownRef     = useRef<Record<string, {text: string; at: number}>>({});
 
   // Fetch driver info & loads & messages — chain driver fetch first so name is fresh for filtering
   const refresh = useCallback(() => {
@@ -276,24 +281,40 @@ function DriverSession({ driverId }: { driverId: string }) {
             scheduleChunk(bytes.buffer);
             break;
           }
-          case "transcript":
-            if (msg.text?.trim()) {
-              const spk = msg.speaker === "trucky" ? "trucky" : "driver";
-              if (spk === "trucky") {
-                setTranscripts(p => [...p, { id: Date.now().toString(), speaker: "trucky", text: msg.text, timestamp: new Date() }]);
-              } else {
-                setTranscripts(p => {
-                  const last = p[p.length - 1];
-                  // Always replace last driver bubble (handles both partial and final transcripts)
-                  if (last?.speaker === "driver") {
-                    return [...p.slice(0, -1), { ...last, text: msg.text }];
-                  }
-                  return [...p, { id: Date.now().toString(), speaker: spk, text: msg.text, timestamp: new Date() }];
-                });
-              }
-              setActiveTab("chat");
+          case "transcript": {
+            const chunk = msg.text?.trim();
+            if (!chunk) break;
+            if (msg.speaker === "trucky") {
+              truckyBufRef.current = chunk;
+              if (truckyTimerRef.current) clearTimeout(truckyTimerRef.current);
+              truckyTimerRef.current = setTimeout(() => {
+                const text = truckyBufRef.current.trim();
+                const prev = lastShownRef.current["trucky"];
+                if (text && !(prev?.text === text && Date.now() - prev.at < 8000)) {
+                  lastShownRef.current["trucky"] = { text, at: Date.now() };
+                  setTranscripts(p => [...p, { id: Date.now().toString(), speaker: "trucky", text, timestamp: new Date() }]);
+                  setActiveTab("chat");
+                }
+                truckyBufRef.current = "";
+                truckyTimerRef.current = null;
+              }, 1000);
+            } else {
+              userBufRef.current = chunk;
+              if (userTimerRef.current) clearTimeout(userTimerRef.current);
+              userTimerRef.current = setTimeout(() => {
+                const text = userBufRef.current.trim();
+                const prev = lastShownRef.current["driver"];
+                if (text && !(prev?.text === text && Date.now() - prev.at < 8000)) {
+                  lastShownRef.current["driver"] = { text, at: Date.now() };
+                  setTranscripts(p => [...p, { id: Date.now().toString(), speaker: "driver", text, timestamp: new Date() }]);
+                  setActiveTab("chat");
+                }
+                userBufRef.current = "";
+                userTimerRef.current = null;
+              }, 1200);
             }
             break;
+          }
           case "tool_start":
             setToolActivities(p => [...p.slice(-9), { id: Date.now().toString(), tool: msg.tool, timestamp: new Date() }]);
             if (msg.tool === "send_message_to_dispatcher") setActiveTab("messages");
@@ -320,7 +341,6 @@ function DriverSession({ driverId }: { driverId: string }) {
             }
             break;
           case "turn_complete":
-            truckyTurnDoneRef.current = true; // next Trucky message starts a fresh bubble
             playbackTimeRef.current = 0;
             break;
           case "error":

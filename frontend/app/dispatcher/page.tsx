@@ -1382,7 +1382,11 @@ function AIPanel({ stats, onRefresh }: { stats: FleetStats; onRefresh?: () => vo
   const streamRef = useRef<MediaStream | null>(null);
   const nextTimeRef = useRef(0);
   const txEnd = useRef<HTMLDivElement>(null);
-  const truckyTurnDone = useRef(true); // true = next Trucky msg starts a new bubble
+  const truckyBuf  = useRef("");
+  const truckyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const youBuf     = useRef("");
+  const youTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastShown  = useRef<Record<string, {text: string; at: number}>>({});
 
   // Poll messages every 10s
   useEffect(() => {
@@ -1432,21 +1436,38 @@ function AIPanel({ stats, onRefresh }: { stats: FleetStats; onRefresh?: () => vo
         src.onended = () => { if (nextTimeRef.current <= ctx.currentTime + 0.05) setVoiceState(active ? "listening" : "idle"); };
       }
       if (msg.type === "transcript" && msg.text?.trim()) {
-        const speaker = (msg.speaker === "user" || msg.speaker === "dispatcher") ? "You" : "Trucky";
-        if (speaker === "Trucky") {
-          setTranscript(p => [...p.slice(-40), { speaker, text: msg.text }]);
-        } else {
-          setTranscript(p => {
-            const last = p[p.length - 1];
-            if (last?.speaker === "You") {
-              return [...p.slice(0, -1), { speaker, text: msg.text }];
+        const chunk = msg.text.trim();
+        const isYou = msg.speaker === "user" || msg.speaker === "dispatcher";
+        if (!isYou) {
+          truckyBuf.current = chunk;
+          if (truckyTimer.current) clearTimeout(truckyTimer.current);
+          truckyTimer.current = setTimeout(() => {
+            const text = truckyBuf.current.trim();
+            const prev = lastShown.current["trucky"];
+            if (text && !(prev?.text === text && Date.now() - prev.at < 8000)) {
+              lastShown.current["trucky"] = { text, at: Date.now() };
+              setTranscript(p => [...p.slice(-40), { speaker: "Trucky", text }]);
             }
-            return [...p.slice(-40), { speaker, text: msg.text }];
-          });
+            truckyBuf.current = "";
+            truckyTimer.current = null;
+          }, 1000);
+        } else {
+          youBuf.current = chunk;
+          if (youTimer.current) clearTimeout(youTimer.current);
+          youTimer.current = setTimeout(() => {
+            const text = youBuf.current.trim();
+            const prev = lastShown.current["you"];
+            if (text && !(prev?.text === text && Date.now() - prev.at < 8000)) {
+              lastShown.current["you"] = { text, at: Date.now() };
+              setTranscript(p => [...p.slice(-40), { speaker: "You", text }]);
+            }
+            youBuf.current = "";
+            youTimer.current = null;
+          }, 1200);
         }
       }
       if (msg.type === "turn_complete") {
-        truckyTurnDone.current = true; // next Trucky message starts a fresh bubble
+        // no-op — debounce timers handle flushing naturally
       }
       if (msg.type === "tool_result") {
         onRefresh?.();

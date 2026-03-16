@@ -957,30 +957,16 @@ async def run_voice_session(
                         try:
                             if response.server_content:
                                 sc = response.server_content
-                                # User voice transcription — accumulate, send ONLY when finished
+                                # User voice transcription — accumulate ONLY, flush at turn_complete
                                 if sc.input_transcription and sc.input_transcription.text:
                                     input_transcript_buf += sc.input_transcription.text
-                                    if sc.input_transcription.finished is True:
-                                        if input_transcript_buf.strip():
-                                            await websocket.send_text(json.dumps({
-                                                "type": "transcript",
-                                                "text": input_transcript_buf.strip(),
-                                                "speaker": "user",
-                                            }))
-                                        input_transcript_buf = ""
-                                # Trucky output transcription — accumulate, send ONLY when finished
+                                # Trucky output transcription — accumulate ONLY, flush at turn_complete
+                                # NOTE: output_transcription.finished fires per-word in the SDK,
+                                # NOT at end of utterance — so we never send here
                                 if sc.output_transcription and sc.output_transcription.text:
                                     chunk = sc.output_transcription.text.strip()
                                     if chunk:
                                         output_transcript_buf += (" " if output_transcript_buf else "") + chunk
-                                    if sc.output_transcription.finished:
-                                        if output_transcript_buf.strip():
-                                            await websocket.send_text(json.dumps({
-                                                "type": "transcript",
-                                                "text": output_transcript_buf.strip(),
-                                                "speaker": "trucky",
-                                            }))
-                                        output_transcript_buf = ""
                                 if sc.model_turn:
                                     for part in sc.model_turn.parts:
                                         if hasattr(part, "thought") and part.thought:
@@ -994,7 +980,16 @@ async def run_voice_session(
                                         # to avoid duplicate bubbles in native audio mode
 
                                 if sc.turn_complete:
-                                    # Flush any unsent transcript buffers on turn end
+                                    # Flush transcript buffers — Trucky FIRST so the
+                                    # replace-in-place chain in the frontend stays intact,
+                                    # then user, then the turn_complete signal.
+                                    if output_transcript_buf.strip():
+                                        await websocket.send_text(json.dumps({
+                                            "type": "transcript",
+                                            "text": output_transcript_buf.strip(),
+                                            "speaker": "trucky",
+                                        }))
+                                        output_transcript_buf = ""
                                     if input_transcript_buf.strip():
                                         await websocket.send_text(json.dumps({
                                             "type": "transcript",
@@ -1002,14 +997,6 @@ async def run_voice_session(
                                             "speaker": "user",
                                         }))
                                         input_transcript_buf = ""
-                                    if output_transcript_buf.strip():
-                                        await websocket.send_text(json.dumps({
-                                            "type": "transcript",
-                                            "text": output_transcript_buf.strip(),
-                                            "speaker": "trucky",
-                                            "partial": False,
-                                        }))
-                                        output_transcript_buf = ""
                                     await websocket.send_text(json.dumps({"type": "turn_complete"}))
 
                             elif response.data:
