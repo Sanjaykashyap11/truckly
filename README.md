@@ -291,6 +291,9 @@ Trucky's mission directly mirrors FMCSA's mandate: reduce commercial motor vehic
 
 | | URL |
 |-|-----|
+| **🌐 Live Demo** | **https://trucky-ai.vercel.app** |
+| **Dispatcher TMS** | https://trucky-ai.vercel.app/dispatcher |
+| **Driver App** | https://trucky-ai.vercel.app/driver |
 | **Backend (Cloud Run)** | https://trucky-backend-751835462523.us-central1.run.app |
 | **Health check** | https://trucky-backend-751835462523.us-central1.run.app/health |
 | **GitHub** | https://github.com/Sanjaykashyap11/truckly |
