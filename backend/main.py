@@ -957,7 +957,7 @@ async def run_voice_session(
                         try:
                             if response.server_content:
                                 sc = response.server_content
-                                # User voice transcription — accumulate, send on finished or when substantial
+                                # User voice transcription — accumulate, send ONLY when finished
                                 if sc.input_transcription and sc.input_transcription.text:
                                     input_transcript_buf += sc.input_transcription.text
                                     if sc.input_transcription.finished is True:
@@ -968,26 +968,18 @@ async def run_voice_session(
                                                 "speaker": "user",
                                             }))
                                         input_transcript_buf = ""
-                                    elif input_transcript_buf.strip():
-                                        # Send partial user transcript for real-time feedback
-                                        await websocket.send_text(json.dumps({
-                                            "type": "transcript",
-                                            "text": input_transcript_buf.strip(),
-                                            "speaker": "user",
-                                            "partial": True,
-                                        }))
-                                # Trucky output transcription — send every non-empty chunk immediately
+                                # Trucky output transcription — accumulate, send ONLY when finished
                                 if sc.output_transcription and sc.output_transcription.text:
                                     chunk = sc.output_transcription.text.strip()
                                     if chunk:
                                         output_transcript_buf += (" " if output_transcript_buf else "") + chunk
-                                        await websocket.send_text(json.dumps({
-                                            "type": "transcript",
-                                            "text": output_transcript_buf.strip(),
-                                            "speaker": "trucky",
-                                            "partial": sc.output_transcription.finished is not True,
-                                        }))
                                     if sc.output_transcription.finished:
+                                        if output_transcript_buf.strip():
+                                            await websocket.send_text(json.dumps({
+                                                "type": "transcript",
+                                                "text": output_transcript_buf.strip(),
+                                                "speaker": "trucky",
+                                            }))
                                         output_transcript_buf = ""
                                 if sc.model_turn:
                                     for part in sc.model_turn.parts:
