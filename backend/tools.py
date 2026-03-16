@@ -172,6 +172,44 @@ def get_tools() -> list:
                         required=["notification_type", "message"],
                     ),
                 ),
+                types.FunctionDeclaration(
+                    name="send_message_to_dispatcher",
+                    description=(
+                        "Send a real-time message to the dispatcher. Call when the driver asks to "
+                        "inform, notify, or message the dispatcher about anything — status updates, "
+                        "ETA changes, fatigue, delays, or any coordination needs."
+                    ),
+                    parameters=types.Schema(
+                        type=types.Type.OBJECT,
+                        properties={
+                            "message": types.Schema(
+                                type=types.Type.STRING,
+                                description="The message to send to the dispatcher",
+                            ),
+                            "new_eta": types.Schema(
+                                type=types.Type.STRING,
+                                description="Updated ETA if the driver is running late (e.g. '6:30 PM' or '2026-03-15T18:30')",
+                            ),
+                            "urgency": types.Schema(
+                                type=types.Type.STRING,
+                                enum=["low", "medium", "high", "emergency"],
+                            ),
+                        },
+                        required=["message"],
+                    ),
+                ),
+                types.FunctionDeclaration(
+                    name="get_my_loads",
+                    description=(
+                        "Get all loads currently assigned to this driver from the live load board. "
+                        "ALWAYS call this when driver asks about their load, destination, pickup, delivery, rate, or cargo. "
+                        "Never say 'no loads' without calling this first."
+                    ),
+                    parameters=types.Schema(
+                        type=types.Type.OBJECT,
+                        properties={},
+                    ),
+                ),
             ]
         )
     ]
@@ -284,6 +322,44 @@ def get_dispatcher_tools() -> list:
                     ),
                 ),
                 types.FunctionDeclaration(
+                    name="manage_load",
+                    description=(
+                        "Create, assign, update, or list loads on the load board. "
+                        "Use when dispatcher says 'create a load', 'assign this load to [driver]', "
+                        "'mark load as delivered', 'show me the loads', 'add a rate con', etc."
+                    ),
+                    parameters=types.Schema(
+                        type=types.Type.OBJECT,
+                        properties={
+                            "action": types.Schema(
+                                type=types.Type.STRING,
+                                enum=["list", "create", "assign", "update_status", "delete"],
+                                description="Operation to perform on loads",
+                            ),
+                            "load_id": types.Schema(
+                                type=types.Type.STRING,
+                                description="Load ID for assign/update/delete operations",
+                            ),
+                            "driver_name": types.Schema(
+                                type=types.Type.STRING,
+                                description="Driver name to assign load to",
+                            ),
+                            "origin": types.Schema(type=types.Type.STRING, description="Pickup location"),
+                            "destination": types.Schema(type=types.Type.STRING, description="Delivery location"),
+                            "rate": types.Schema(type=types.Type.NUMBER, description="Load rate in dollars"),
+                            "commodity": types.Schema(type=types.Type.STRING, description="Type of freight/commodity"),
+                            "pickup_date": types.Schema(type=types.Type.STRING, description="Pickup date/time"),
+                            "delivery_date": types.Schema(type=types.Type.STRING, description="Delivery deadline"),
+                            "status": types.Schema(
+                                type=types.Type.STRING,
+                                enum=["PENDING", "ASSIGNED", "IN_TRANSIT", "DELIVERED", "CANCELLED"],
+                            ),
+                            "notes": types.Schema(type=types.Type.STRING, description="Additional notes"),
+                        },
+                        required=["action"],
+                    ),
+                ),
+                types.FunctionDeclaration(
                     name="plan_delivery",
                     description=(
                         "Find the best driver and calculate FMCSA-compliant earliest delivery time for a load. "
@@ -295,18 +371,45 @@ def get_dispatcher_tools() -> list:
                         properties={
                             "destination": types.Schema(
                                 type=types.Type.STRING,
-                                description="Destination city or address",
+                                description="Destination city or address (e.g. 'Chicago, IL')",
                             ),
                             "distance_miles": types.Schema(
                                 type=types.Type.NUMBER,
-                                description="Estimated driving distance in miles",
+                                description="Driving distance in miles. OMIT — will be auto-calculated from destination via routing API.",
                             ),
                             "required_by": types.Schema(
                                 type=types.Type.STRING,
-                                description="Optional deadline in ISO format (e.g. 2026-03-15T17:00:00)",
+                                description="Optional delivery deadline in ISO format (e.g. 2026-03-15T17:00:00)",
                             ),
                         },
-                        required=["destination", "distance_miles"],
+                        required=["destination"],
+                    ),
+                ),
+                types.FunctionDeclaration(
+                    name="send_message_to_driver",
+                    description=(
+                        "Send a direct message from the dispatcher to a specific driver. "
+                        "Use when dispatcher says 'tell [driver] that...', 'message [driver]', "
+                        "'inform [driver]', 'notify [driver] that...', etc."
+                    ),
+                    parameters=types.Schema(
+                        type=types.Type.OBJECT,
+                        properties={
+                            "driver_name": types.Schema(
+                                type=types.Type.STRING,
+                                description="Name of the driver to message (partial match OK)",
+                            ),
+                            "message": types.Schema(
+                                type=types.Type.STRING,
+                                description="The message text to send to the driver",
+                            ),
+                            "urgency": types.Schema(
+                                type=types.Type.STRING,
+                                enum=["low", "medium", "high", "emergency"],
+                                description="Message urgency level",
+                            ),
+                        },
+                        required=["driver_name", "message"],
                     ),
                 ),
             ]
@@ -321,12 +424,19 @@ async def handle_tool_call(tool_name: str, args: Dict[str, Any], driver_id: str)
     """Route driver tool calls to handlers"""
     from mock_data import MOCK_DRIVERS
     try:
-        # Try ACTIVE_DRIVERS first (Samsara), fall back to mock
+        # Try ACTIVE_DRIVERS from host module (handles __main__ vs main naming)
         try:
-            from main import ACTIVE_DRIVERS
+            import sys as _sys
+            _host = _sys.modules.get('__main__') or _sys.modules.get('main')
+            ACTIVE_DRIVERS = _host.ACTIVE_DRIVERS
             driver = ACTIVE_DRIVERS.get(driver_id) or list(ACTIVE_DRIVERS.values())[0]
         except Exception:
             driver = MOCK_DRIVERS.get(driver_id, list(MOCK_DRIVERS.values())[0])
+
+        if tool_name == "send_message_to_dispatcher":
+            return await send_message_to_dispatcher_tool(args, driver, driver_id)
+        if tool_name == "get_my_loads":
+            return await get_my_loads_tool(driver)
 
         handlers = {
             "check_hos_status": check_hos_status,
@@ -350,20 +460,21 @@ async def handle_dispatcher_tool_call(
     """Route dispatcher tool calls to handlers"""
     try:
         handlers = {
-            "get_fleet_status":  lambda a, _: get_fleet_status(a, active_drivers),
-            "get_driver_details": lambda a, _: get_driver_details(a, active_drivers),
-            "check_hos_status":  lambda a, _: check_hos_status_fleet(a, active_drivers),
-            "plan_delivery":     lambda a, _: plan_delivery_tool(a, active_drivers),
+            "get_fleet_status":    lambda a, _: get_fleet_status(a, active_drivers),
+            "get_driver_details":  lambda a, _: get_driver_details(a, active_drivers),
+            "check_hos_status":    lambda a, _: check_hos_status_fleet(a, active_drivers),
+            "plan_delivery":       lambda a, _: plan_delivery_tool(a, active_drivers),
+            "manage_load":         lambda a, _: manage_load_tool(a, active_drivers),
+            "send_message_to_driver": lambda a, _: send_message_to_driver_tool(a, active_drivers),
             "notify_stakeholders": notify_stakeholders,
-            "handle_breakdown":  handle_breakdown,
-            "check_route_safety": check_route_safety,
+            "handle_breakdown":    handle_breakdown,
+            "check_route_safety":  check_route_safety,
         }
         handler = handlers.get(tool_name)
         if not handler:
             return {"error": f"Unknown dispatcher tool: {tool_name}"}
 
-        # For tools that don't need active_drivers, pass a dummy driver
-        if tool_name in ("notify_stakeholders", "handle_breakdown", "check_route_safety"):
+        if tool_name in ("notify_stakeholders", "handle_breakdown", "check_route_safety", "manage_load", "send_message_to_driver"):
             drivers = list(active_drivers.values())
             driver = drivers[0] if drivers else {}
             return await handler(args, driver)
@@ -403,30 +514,95 @@ async def check_hos_status(args: Dict, driver: Dict) -> Dict:
         }
 
     elif query_type == "can_complete_trip":
-        destination = args.get("destination", driver.get("destination", {}).get("address", "destination") if driver.get("destination") else "destination")
-        trip_mins = 210  # estimated 3.5 hours
-        can_complete = drive_mins >= trip_mins
+        destination = args.get("destination", "")
+        origin_addr = driver.get("current_location", {}).get("address", "")
+        origin_lat  = driver.get("current_location", {}).get("lat", 0)
+        origin_lng  = driver.get("current_location", {}).get("lng", 0)
+
+        # Auto-calculate real drive time via OSRM + Nominatim
+        distance_miles = 0
+        trip_mins = 0
+        try:
+            import httpx as _httpx
+            nom_h = {"User-Agent": "TruckyTMS/2.0"}
+            async with _httpx.AsyncClient(timeout=12.0) as hc:
+                # Geocode destination
+                r1 = await hc.get("https://nominatim.openstreetmap.org/search",
+                                  params={"q": destination, "format": "json", "limit": 1},
+                                  headers=nom_h)
+                locs = r1.json()
+                if locs:
+                    dlat, dlng = float(locs[0]["lat"]), float(locs[0]["lon"])
+                    # Use driver GPS if available, else geocode origin address
+                    if origin_lat and origin_lng:
+                        olat, olng = origin_lat, origin_lng
+                    elif origin_addr:
+                        r0 = await hc.get("https://nominatim.openstreetmap.org/search",
+                                          params={"q": origin_addr, "format": "json", "limit": 1},
+                                          headers=nom_h)
+                        orig_locs = r0.json()
+                        olat, olng = (float(orig_locs[0]["lat"]), float(orig_locs[0]["lon"])) if orig_locs else (40.7128, -74.006)
+                    else:
+                        olat, olng = 40.7128, -74.006
+
+                    r2 = await hc.get(
+                        f"http://router.project-osrm.org/route/v1/driving/{olng},{olat};{dlng},{dlat}",
+                        params={"overview": "false"})
+                    rd = r2.json()
+                    if rd.get("code") == "Ok":
+                        distance_miles = round(rd["routes"][0]["distance"] * 0.000621371, 1)
+                        drive_secs = rd["routes"][0]["duration"]
+                        trip_mins = int(drive_secs / 60)
+        except Exception as ex:
+            logger.warning(f"Trip distance calc failed: {ex}")
+
+        # Fallback if routing failed
+        if trip_mins == 0:
+            trip_mins = 210
+
+        # Account for mandatory 30-min break if trip > 8h cumulative
+        break_needed = 0
+        time_driving_today = hos.get("time_driving_today_mins", 0)
+        if time_driving_today + trip_mins > 480:
+            break_needed = 30
+
+        total_time_needed = trip_mins + break_needed
+        hrs_needed = total_time_needed // 60
+        mins_needed = total_time_needed % 60
+        trip_h = trip_mins // 60
+        trip_m = trip_mins % 60
+        trip_label = f"{trip_h}h {trip_m}min" if trip_h > 0 else f"{trip_m}min"
+        dist_label = f"{distance_miles} miles" if distance_miles else "calculated route"
+
+        can_complete = drive_mins >= total_time_needed
         if can_complete:
+            leftover = drive_mins - total_time_needed
             return {
                 "data_source": source_label,
                 "can_complete": True,
                 "drive_time_remaining": f"{dh}h {dm}min",
-                "trip_estimated": "3h 30min",
-                "hours_remaining_on_arrival": f"{(drive_mins - trip_mins) // 60}h {(drive_mins - trip_mins) % 60}min",
+                "distance": dist_label,
+                "trip_drive_time": trip_label,
+                "break_required": f"{break_needed} min" if break_needed else "None (under 8h driving)",
+                "total_time_needed": f"{hrs_needed}h {mins_needed}min",
+                "hours_remaining_on_arrival": f"{leftover // 60}h {leftover % 60}min",
                 "compliance": "COMPLIANT",
-                "recommendation": f"Legal for {destination}. Mandatory 30-min break scheduled en route.",
+                "recommendation": f"Legal to complete trip to {destination}." + (" Schedule 30-min break en route." if break_needed else ""),
             }
         else:
-            overage = trip_mins - drive_mins
+            overage = total_time_needed - drive_mins
             return {
                 "data_source": source_label,
                 "can_complete": False,
                 "drive_time_remaining": f"{dh}h {dm}min",
-                "trip_estimated": "3h 30min",
-                "overage": f"{overage // 60}h {overage % 60}min over limit",
+                "distance": dist_label,
+                "trip_drive_time": trip_label,
+                "break_required": f"{break_needed} min" if break_needed else "None",
+                "total_time_needed": f"{hrs_needed}h {mins_needed}min",
+                "shortfall": f"{overage // 60}h {overage % 60}min short",
                 "max_fine": "$16,000",
                 "compliance": "VIOLATION — CANNOT COMPLETE TRIP",
-                "recommendation": "Must complete 10-hour rest break first. Notifying receiver now.",
+                "recommendation": "Must take 10-hour rest break before this trip. Earliest legal departure after rest.",
             }
 
     elif query_type == "next_break":
@@ -561,18 +737,44 @@ async def handle_breakdown(args: Dict, driver: Dict) -> Dict:
 
 
 async def notify_stakeholders(args: Dict, driver: Dict) -> Dict:
+    import uuid as _uuid
+    import asyncio
     driver_name = driver.get("name", args.get("driver_name", "Fleet")) if driver else args.get("driver_name", "Fleet")
+    driver_id   = driver.get("id", "") if driver else ""
+    msg_text    = args.get("message", "")
+    new_eta     = args.get("new_eta", "")
+    notif_type  = args.get("notification_type", "update")
+
+    # Save to MESSAGES and broadcast to dispatcher UI
+    try:
+        from state import MESSAGES, broadcast
+        msg = {
+            "id": str(_uuid.uuid4())[:8].upper(),
+            "driver_id": driver_id,
+            "driver_name": driver_name,
+            "direction": "driver_to_dispatcher",
+            "text": f"[{notif_type.upper()}] {msg_text}",
+            "new_eta": new_eta,
+            "urgency": "high" if notif_type in ("breakdown", "delay") else "medium",
+            "read": False,
+            "timestamp": datetime.now().isoformat(),
+        }
+        MESSAGES.append(msg)
+        asyncio.create_task(broadcast({"type": "new_message", "message": msg}))
+    except Exception as e:
+        logger.warning(f"notify_stakeholders broadcast failed: {e}")
+
     return {
         "notifications_sent": True,
         "driver": driver_name,
         "recipients": ["dispatcher", "shipper", "receiver", "broker"],
-        "notification_type": args.get("notification_type"),
-        "message_sent": args.get("message"),
-        "new_eta": args.get("new_eta", ""),
+        "notification_type": notif_type,
+        "message_sent": msg_text,
+        "new_eta": new_eta,
         "delivery_method": "SMS + dashboard notification + email",
         "timestamp": datetime.now().isoformat(),
         "driver_action_required": False,
-        "confirmation": "All parties notified. No calls needed.",
+        "confirmation": f"All parties notified about {notif_type}. Dispatcher has been alerted.",
     }
 
 
@@ -700,10 +902,40 @@ async def check_hos_status_fleet(args: Dict, active_drivers: dict) -> Dict:
 
 async def plan_delivery_tool(args: Dict, active_drivers: dict) -> Dict:
     """FMCSA-compliant trip planning for dispatcher — find best driver + earliest delivery"""
+    import httpx as _httpx
     from trip_planner import rank_drivers_for_load
     destination    = args.get("destination", "destination")
-    distance_miles = float(args.get("distance_miles", 100))
+    distance_miles = float(args.get("distance_miles") or 0)
     required_by    = args.get("required_by")
+
+    # Auto-calculate distance from fleet centroid → destination via OSRM
+    if distance_miles <= 0 and destination:
+        try:
+            drivers_list = list(active_drivers.values())
+            gps_drivers  = [d for d in drivers_list if d.get("current_location", {}).get("lat")]
+            if gps_drivers:
+                lat1 = sum(d["current_location"]["lat"] for d in gps_drivers) / len(gps_drivers)
+                lng1 = sum(d["current_location"]["lng"] for d in gps_drivers) / len(gps_drivers)
+            else:
+                lat1, lng1 = 40.7128, -74.0060
+            nom_h = {"User-Agent": "TruckyTMS/2.0"}
+            async with _httpx.AsyncClient(timeout=10.0) as hc:
+                r1 = await hc.get("https://nominatim.openstreetmap.org/search",
+                                  params={"q": destination, "format": "json", "limit": 1}, headers=nom_h)
+                locs = r1.json()
+                if locs:
+                    lat2, lng2 = float(locs[0]["lat"]), float(locs[0]["lon"])
+                    r2 = await hc.get(
+                        f"http://router.project-osrm.org/route/v1/driving/{lng1},{lat1};{lng2},{lat2}",
+                        params={"overview": "false"})
+                    rd = r2.json()
+                    if rd.get("code") == "Ok":
+                        distance_miles = round(rd["routes"][0]["distance"] * 0.000621371, 1)
+                        logger.info(f"Auto-calculated distance to {destination}: {distance_miles} mi")
+        except Exception as e:
+            logger.warning(f"Auto-distance failed: {e}")
+    if distance_miles <= 0:
+        distance_miles = 300  # reasonable fallback
 
     drivers = list(active_drivers.values())
     ranked  = rank_drivers_for_load(drivers, distance_miles, required_by)
@@ -735,4 +967,207 @@ async def plan_delivery_tool(args: Dict, active_drivers: dict) -> Dict:
         "total_evaluated": len(drivers),
         "data_source": "Samsara ELD (live HOS clocks)",
         "recommendation": results[0] if results else "No drivers available",
+    }
+
+
+async def manage_load_tool(args: Dict, active_drivers: dict) -> Dict:
+    """CRUD operations on the load board — called by dispatcher Trucky AI"""
+    import uuid as _uuid
+    import asyncio
+    from state import LOADS, broadcast
+
+    action = args.get("action", "list")
+
+    if action == "list":
+        if not LOADS:
+            return {"loads": [], "count": 0, "message": "Load board is empty"}
+        return {
+            "loads": LOADS[-20:],  # most recent 20
+            "count": len(LOADS),
+        }
+
+    elif action == "create":
+        # Find driver by name if provided
+        driver_name = args.get("driver_name", "")
+        assigned_driver = None
+        truck = ""
+        if driver_name:
+            for d in active_drivers.values():
+                if driver_name.lower() in d.get("name", "").lower():
+                    assigned_driver = d.get("name")
+                    truck = d.get("truck", "")
+                    break
+
+        new_load = {
+            "id": str(_uuid.uuid4())[:8].upper(),
+            "origin": args.get("origin", "TBD"),
+            "destination": args.get("destination", "TBD"),
+            "status": "ASSIGNED" if assigned_driver else "PENDING",
+            "driver_name": assigned_driver or "Unassigned",
+            "driver_id": "",
+            "truck": truck,
+            "rate": float(args.get("rate") or 0),
+            "fuel_surcharge": round(float(args.get("rate") or 0) * 0.12, 2),
+            "commodity": args.get("commodity", "General Freight"),
+            "pickup_date": args.get("pickup_date", datetime.now().strftime("%Y-%m-%d")),
+            "delivery_date": args.get("delivery_date", ""),
+            "distance_miles": 0,
+            "weight_lbs": 0,
+            "notes": args.get("notes", ""),
+            "created_at": datetime.now().isoformat(),
+            "created_by": "trucky_ai",
+        }
+        LOADS.append(new_load)
+        logger.info(f"Trucky created load {new_load['id']}: {new_load['origin']} → {new_load['destination']}")
+        asyncio.create_task(broadcast({"type": "load_update", "action": "created", "load": new_load}))
+        return {
+            "success": True,
+            "action": "created",
+            "load": new_load,
+            "message": f"Load {new_load['id']} created: {new_load['origin']} → {new_load['destination']}" +
+                       (f", assigned to {assigned_driver}" if assigned_driver else ", unassigned"),
+        }
+
+    elif action == "assign":
+        load_id = args.get("load_id", "").upper()
+        driver_name = args.get("driver_name", "")
+        load = next((l for l in LOADS if l["id"] == load_id), None)
+        if not load:
+            return {"success": False, "error": f"Load {load_id} not found"}
+        assigned_driver = None
+        for d in active_drivers.values():
+            if driver_name.lower() in d.get("name", "").lower():
+                assigned_driver = d.get("name")
+                load["truck"] = d.get("truck", "")
+                break
+        if not assigned_driver:
+            return {"success": False, "error": f"Driver '{driver_name}' not found in fleet"}
+        load["driver_name"] = assigned_driver
+        load["status"] = "ASSIGNED"
+        asyncio.create_task(broadcast({"type": "load_update", "action": "assigned", "load": load}))
+        return {
+            "success": True,
+            "action": "assigned",
+            "load_id": load_id,
+            "driver": assigned_driver,
+            "message": f"Load {load_id} assigned to {assigned_driver}",
+        }
+
+    elif action == "update_status":
+        load_id = args.get("load_id", "").upper()
+        new_status = args.get("status", "")
+        load = next((l for l in LOADS if l["id"] == load_id), None)
+        if not load:
+            return {"success": False, "error": f"Load {load_id} not found"}
+        load["status"] = new_status
+        return {
+            "success": True,
+            "action": "updated",
+            "load_id": load_id,
+            "status": new_status,
+            "message": f"Load {load_id} status updated to {new_status}",
+        }
+
+    elif action == "delete":
+        load_id = args.get("load_id", "").upper()
+        before = len(LOADS)
+        LOADS[:] = [l for l in LOADS if l["id"] != load_id]
+        if len(LOADS) < before:
+            return {"success": True, "action": "deleted", "load_id": load_id}
+        return {"success": False, "error": f"Load {load_id} not found"}
+
+    return {"error": f"Unknown action: {action}"}
+
+
+async def get_my_loads_tool(driver: Dict) -> Dict:
+    """Return loads assigned to this driver from the live load board"""
+    from state import LOADS
+    driver_name = driver.get("name", "")
+    first = driver_name.split()[0].lower() if driver_name else ""
+    if not first:
+        return {"loads": [], "count": 0, "message": "Could not identify driver name"}
+
+    mine = [l for l in LOADS if first in (l.get("driver_name") or "").lower()]
+    if not mine:
+        return {
+            "loads": [],
+            "count": 0,
+            "message": f"No loads currently assigned to {driver_name} on the load board.",
+        }
+    return {
+        "loads": mine,
+        "count": len(mine),
+        "message": f"{len(mine)} load(s) assigned to {driver_name}.",
+    }
+
+
+async def send_message_to_dispatcher_tool(args: Dict, driver: Dict, driver_id: str) -> Dict:
+    """Send a real-time message from driver to dispatcher"""
+    import uuid as _uuid
+    from state import MESSAGES, broadcast
+    import asyncio
+
+    driver_name = driver.get("name", driver_id)
+    msg = {
+        "id": str(_uuid.uuid4())[:8].upper(),
+        "driver_id": driver_id,
+        "driver_name": driver_name,
+        "direction": "driver_to_dispatcher",
+        "text": args.get("message", ""),
+        "new_eta": args.get("new_eta", ""),
+        "urgency": args.get("urgency", "medium"),
+        "read": False,
+        "timestamp": datetime.now().isoformat(),
+    }
+    MESSAGES.append(msg)
+    # Broadcast to all connected dispatcher clients
+    asyncio.create_task(broadcast({"type": "new_message", "message": msg}))
+    logger.info(f"Driver {driver_name} → Dispatcher: {msg['text']}")
+    return {
+        "success": True,
+        "message_id": msg["id"],
+        "confirmation": f"Message sent to dispatcher: \"{msg['text']}\"" + (f" New ETA: {msg['new_eta']}" if msg["new_eta"] else ""),
+    }
+
+
+async def send_message_to_driver_tool(args: Dict, active_drivers: dict) -> Dict:
+    """Send a direct message from dispatcher to a specific driver"""
+    import uuid as _uuid
+    import asyncio
+    from state import MESSAGES, broadcast
+
+    driver_name_query = args.get("driver_name", "").lower()
+    message_text = args.get("message", "")
+    urgency = args.get("urgency", "medium")
+
+    # Find the driver by partial name match
+    target_driver = None
+    for d in active_drivers.values():
+        if driver_name_query and driver_name_query.split()[0] in d.get("name", "").lower():
+            target_driver = d
+            break
+
+    if not target_driver:
+        return {"success": False, "error": f"Driver '{args.get('driver_name')}' not found in fleet"}
+
+    msg = {
+        "id": str(_uuid.uuid4())[:8].upper(),
+        "driver_id": "",
+        "driver_name": "Dispatcher",
+        "to_driver_id": target_driver.get("id", ""),
+        "to_driver_name": target_driver.get("name", ""),
+        "direction": "dispatcher_to_driver",
+        "text": message_text,
+        "urgency": urgency,
+        "new_eta": "",
+        "read": False,
+        "timestamp": datetime.now().isoformat(),
+    }
+    MESSAGES.append(msg)
+    asyncio.create_task(broadcast({"type": "new_message", "message": msg}))
+    logger.info(f"Dispatcher → {target_driver.get('name')}: {message_text}")
+    return {
+        "success": True,
+        "message_id": msg["id"],
+        "confirmation": f"Message sent to {target_driver.get('name')}: \"{message_text}\"",
     }

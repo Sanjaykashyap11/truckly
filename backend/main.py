@@ -9,6 +9,7 @@ import os
 import re
 import uuid
 from datetime import datetime
+from html.parser import HTMLParser as _HTMLParser
 
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
@@ -43,7 +44,9 @@ app.add_middleware(
 # ─── Live driver state (Samsara-powered, falls back to mock) ──────────────────
 
 ACTIVE_DRIVERS: dict = dict(MOCK_DRIVERS)  # starts as mock; replaced by Samsara data
-LOADS: list = []  # In-memory load board
+import state as _state
+LOADS = _state.LOADS        # shared with tools.py via state module
+MESSAGES = _state.MESSAGES  # shared with tools.py via state module
 
 async def sync_from_samsara():
     """Fetch live fleet data from Samsara ELD and update ACTIVE_DRIVERS"""
@@ -80,6 +83,10 @@ async def samsara_background_sync():
 async def startup_event():
     await sync_from_samsara()
     asyncio.create_task(samsara_background_sync())
+    # Await 7-day fuel history so it's ready before the first API request
+    client = samsara_module.get_client()
+    if client:
+        await client.load_fuel_history(days=7)
     logger.info("Trucky backend started — Samsara sync active")
 
 
@@ -92,17 +99,10 @@ def get_driver(driver_id: str) -> dict:
 
 # ─── Dispatcher broadcast ─────────────────────────────────────────────────────
 
-dispatcher_connections: set[WebSocket] = set()
+dispatcher_connections = _state.dispatcher_connections
 
 
-async def broadcast(message: dict):
-    dead = set()
-    for ws in dispatcher_connections:
-        try:
-            await ws.send_text(json.dumps(message))
-        except Exception:
-            dead.add(ws)
-    dispatcher_connections.difference_update(dead)
+from state import broadcast  # uses state.dispatcher_connections
 
 
 # ─── Gemini client ────────────────────────────────────────────────────────────
@@ -128,6 +128,7 @@ MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-native-audio-latest")
 
 
 def get_driver_system_prompt(driver_id: str) -> str:
+    from state import LOADS
     driver = get_driver(driver_id)
     if not driver:
         return "You are Trucky, an AI co-pilot for truck drivers. Be helpful and safety-focused."
@@ -154,6 +155,22 @@ def get_driver_system_prompt(driver_id: str) -> str:
     eta = route.get("eta", "N/A")
     avoided = ", ".join(route.get("restricted_roads_avoided", [])) or "None"
 
+    # Fetch assigned loads for this driver from the live load board
+    first_lower = first_name.lower()
+    my_loads = [l for l in LOADS if first_lower in (l.get("driver_name") or "").lower()]
+    if my_loads:
+        load_lines = []
+        for l in my_loads:
+            load_lines.append(
+                f"  • Load {l['id']}: {l['origin']} → {l['destination']} | Status: {l['status']} "
+                f"| Cargo: {l.get('commodity','General Freight')} | Rate: ${l.get('rate',0):,.0f}"
+                + (f" | Pickup: {l['pickup_date']}" if l.get('pickup_date') else "")
+                + (f" | Notes: {l['notes']}" if l.get('notes') else "")
+            )
+        loads_block = "\n".join(load_lines)
+    else:
+        loads_block = "  No loads currently assigned on the load board."
+
     return f"""You are Trucky, the AI voice co-pilot for commercial truck drivers — hands-free, safety-first.
 You are speaking with {driver_name}.
 
@@ -171,6 +188,9 @@ DRIVER STATUS{source_label}:
 • Route: {highway} — ETA {eta}
 • Restricted roads avoided: {avoided}
 
+ASSIGNED LOADS (from live load board):
+{loads_block}
+
 YOUR ROLE:
 Replace GPS apps, ELD screens, dispatch calls, fuel finders — all hands-free in one conversation.
 
@@ -184,6 +204,8 @@ RULES:
 7. Be calm, professional, safety-focused — never flustered
 8. Handle interruptions gracefully — driver may cut you off
 9. Never suggest anything that could cause an HOS violation
+10. When asked about loads, deliveries, or destinations — ALWAYS call get_my_loads first to get LIVE data. The load board updates in real-time; never rely only on the context above.
+11. When driver says they are tired, need rest, or wants a day off — call send_message_to_dispatcher immediately with that info
 
 PERSONALITY: Calm, trustworthy co-pilot. Confident. Safety-first. Data-driven.
 Open with: "Hey {first_name}, Trucky here. I've got your ELD data live. How can I help?"
@@ -233,7 +255,22 @@ CAPABILITIES:
 - Route safety validation for any truck
 - FMCSA-compliant trip planning and driver ranking via plan_delivery
 - Automated stakeholder notifications (delay, breakdown, ETA updates)
+- Full load board management: create loads, assign drivers, update status, list loads
 - Fleet-wide command and coordination
+
+LOAD MANAGEMENT (manage_load tool):
+- "Create a load from Chicago to Atlanta at $3,200 rate" → action=create
+- "Assign load ABC123 to [driver name]" → action=assign
+- "Show me all loads / what loads do we have" → action=list
+- "Mark load XYZ as delivered" → action=update_status
+- "Cancel load ABC" → action=update_status with status=CANCELLED
+- You can create AND assign in one step by including driver_name in create action
+
+DRIVER MESSAGING (send_message_to_driver tool):
+- "Tell Oscar that his situation will be taken care" → send_message_to_driver(driver_name="Oscar", message="...")
+- "Message Eric to check in at the next stop" → send_message_to_driver
+- "Notify [driver] that their load is ready" → send_message_to_driver
+- Always use this tool when dispatcher wants to communicate TO a driver — never use notify_stakeholders for dispatcher→driver messages
 
 RULES:
 1. Always call get_fleet_status or get_driver_details to get FRESH data — never guess
@@ -241,11 +278,11 @@ RULES:
 3. Proactively flag any driver with < 1 hour HOS remaining
 4. For breakdown situations, activate emergency protocol immediately
 5. Keep responses concise but informative — dispatcher needs fast answers
-6. Always mention data source (Samsara live vs demo)
-7. When asked "who can make this delivery" — use plan_delivery tool with destination and distance_miles
+6. When asked "who can make this delivery" — use plan_delivery tool, distance is auto-calculated
+7. For any load operation — use manage_load tool immediately, don't ask for confirmation
 
-PERSONALITY: Sharp, professional operations center. Efficient. Proactive. Never guess — always use tools.
-Open with: "Trucky dispatch ready. I have {len(drivers)} drivers on live Samsara ELD. What do you need?"
+PERSONALITY: Sharp, professional AI operations center. Efficient. Proactive. You run the load board.
+Open with: "Trucky dispatch ready. {len(drivers)} drivers on live ELD. I can manage loads, plan routes, and monitor the fleet. What do you need?"
 """
 
 
@@ -448,9 +485,47 @@ async def update_load(load_id: str, body: dict):
 
 @app.delete("/api/loads/{load_id}")
 async def delete_load(load_id: str):
-    global LOADS
-    LOADS = [l for l in LOADS if l["id"] != load_id]
+    LOADS[:] = [l for l in LOADS if l["id"] != load_id]
     return {"success": True}
+
+
+# ─── Driver ↔ Dispatcher Messaging ────────────────────────────────────────────
+
+
+@app.get("/api/messages")
+async def get_messages(driver_id: str = None):
+    if driver_id:
+        return [m for m in MESSAGES if m.get("driver_id") == driver_id or m.get("to_driver_id") == driver_id]
+    return MESSAGES
+
+
+@app.post("/api/messages")
+async def post_message(body: dict):
+    msg = {
+        "id": str(uuid.uuid4())[:8].upper(),
+        "driver_id": body.get("driver_id", ""),
+        "driver_name": body.get("driver_name", ""),
+        "to_driver_id": body.get("to_driver_id", ""),
+        "direction": body.get("direction", "driver_to_dispatcher"),  # or dispatcher_to_driver
+        "text": body.get("text", ""),
+        "eta": body.get("eta", ""),
+        "new_eta": body.get("new_eta", ""),
+        "load_id": body.get("load_id", ""),
+        "read": False,
+        "timestamp": datetime.now().isoformat(),
+    }
+    MESSAGES.append(msg)
+    await broadcast({"type": "new_message", "message": msg})
+    return msg
+
+
+@app.post("/api/messages/{msg_id}/read")
+async def mark_message_read(msg_id: str):
+    for m in MESSAGES:
+        if m["id"] == msg_id:
+            m["read"] = True
+            return {"success": True}
+    return {"success": False}
 
 
 # ─── Distance calculation (OSRM + Nominatim — no API key) ─────────────────────
@@ -524,12 +599,68 @@ async def api_distance(body: dict):
         return {"error": str(e)}
 
 
+# ─── SAFER HTML cell parser ────────────────────────────────────────────────────
+
+
+class _SAFERParser(_HTMLParser):
+    """Extract all TD/TH text cells from SAFER HTML page"""
+    def __init__(self):
+        super().__init__()
+        self._depth = 0
+        self._buf = ""
+        self.cells: list = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("td", "th"):
+            if self._depth == 0:
+                self._buf = ""
+            self._depth += 1
+
+    def handle_endtag(self, tag):
+        if tag in ("td", "th") and self._depth > 0:
+            self._depth -= 1
+            if self._depth == 0:
+                text = " ".join(self._buf.replace("\xa0", " ").split()).strip()
+                if text:
+                    self.cells.append(text)
+                self._buf = ""
+
+    def handle_data(self, data):
+        if self._depth > 0:
+            self._buf += data
+
+    def handle_entityref(self, name):
+        if self._depth > 0:
+            self._buf += {"amp": "&", "lt": "<", "gt": ">", "nbsp": " ", "quot": '"'}.get(name, "")
+
+    def handle_charref(self, name):
+        if self._depth > 0:
+            try:
+                self._buf += chr(int(name[1:], 16) if name.startswith("x") else int(name))
+            except Exception:
+                pass
+
+
+def _safer_extract(cells: list, label: str) -> str:
+    lo = label.lower().rstrip(":")
+    for i, c in enumerate(cells):
+        c_lo = c.lower().rstrip(":")
+        if c_lo == lo or (lo in c_lo and len(c_lo) < len(lo) + 20 and ":" in c):
+            for j in range(i + 1, min(i + 5, len(cells))):
+                v = cells[j].strip()
+                if v and v.lower() not in ("none", "n/a", "") and not v.endswith(":"):
+                    return v
+                elif v:
+                    return v
+    return "N/A"
+
+
 # ─── FMCSA SAFER carrier lookup ────────────────────────────────────────────────
 
 
 @app.post("/api/safer")
 async def safer_lookup(body: dict):
-    dot_number = str(body.get("dot_number", "")).strip().lstrip("0") or ""
+    dot_number = str(body.get("dot_number", "")).strip()
     if not dot_number:
         return {"error": "DOT number required"}
     safer_url = (
@@ -537,38 +668,196 @@ async def safer_lookup(body: dict):
         f"&query_type=queryCarrierSnapshot&query_param=USDOT&query_string={dot_number}"
     )
     try:
-        async with httpx.AsyncClient(timeout=12.0) as hc:
+        async with httpx.AsyncClient(timeout=15.0) as hc:
             r = await hc.get(
                 safer_url,
-                headers={"User-Agent": "Mozilla/5.0 TruckyTMS"},
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120",
+                    "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.5",
+                },
                 follow_redirects=True,
             )
             html = r.text
 
-            def ex(pattern: str) -> str:
-                m = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
-                if m:
-                    raw = re.sub(r"<[^>]+>", "", m.group(1)).strip().replace("&nbsp;", "").strip()
-                    return raw if raw else "N/A"
-                return "N/A"
+        # Build label→value map using SAFER's querylabelbkg/queryfield CSS classes
+        pairs = re.findall(
+            r'querylabelbkg[^>]*>(.*?)</[Tt][Hh]>\s*<[Tt][Dd][^>]*class=["\']?queryfield[^>]*>(.*?)</[Tt][Dd]>',
+            html, re.DOTALL,
+        )
+        data: dict = {}
+        for raw_label, raw_val in pairs:
+            label = re.sub(r"<[^>]+>", "", raw_label).replace("\xa0", "").strip().rstrip(":").lower().strip()
+            val   = re.sub(r"<[^>]+>", " ", raw_val).replace("\xa0", "").replace("&nbsp;", "")
+            val   = " ".join(val.split()).strip()
+            if label and val and val != "--":
+                data[label] = val
 
-            return {
-                "dot_number": dot_number,
-                "legal_name": ex(r"Legal Name[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
-                "dba_name": ex(r"DBA Name[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
-                "physical_address": ex(r"Physical Address[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
-                "phone": ex(r"Phone[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
-                "operating_status": ex(r"Operating Status[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
-                "safety_rating": ex(r"Safety Rating[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
-                "carrier_operation": ex(r"Carrier Operation[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
-                "mcs_150_date": ex(r"MCS-150[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
-                "power_units": ex(r"Power Units[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
-                "drivers": ex(r"Drivers[^<]*</td>\s*<td[^>]*>(.*?)</td>"),
-                "safer_url": safer_url,
-            }
+        def get(key: str) -> str:
+            return data.get(key.lower().rstrip(":").strip(), "N/A")
+
+        # Company name is in the page title or a <B> tag near the top
+        name_m = re.search(r"Company Snapshot\s+([A-Z][^\n<]{3,60})", html)
+        legal_name = name_m.group(1).strip() if name_m else get("company information")
+        if legal_name in ("N/A", ""):
+            legal_name = get("legal name")
+
+        # Drivers field has format "Drivers:\n  18  \n" — extract number
+        drivers_m = re.search(r'Drivers:\s*</[Tt][Hh]>.*?<[Tt][Dd][^>]*>\s*(\d+)', html, re.DOTALL)
+        drivers_val = drivers_m.group(1) if drivers_m else get("drivers")
+
+        return {
+            "dot_number":        dot_number,
+            "legal_name":        legal_name,
+            "dba_name":          get("dba name"),
+            "physical_address":  get("physical address"),
+            "phone":             get("phone"),
+            "operating_status":  get("usdot status"),
+            "authority_status":  get("operating authority status"),
+            "safety_rating":     get("rating"),
+            "review_date":       get("review date"),
+            "carrier_operation": get("carrier operation"),
+            "mcs_150_date":      get("mcs-150 form date"),
+            "mcs_150_mileage":   get("mcs-150 mileage (year)"),
+            "power_units":       get("power units"),
+            "drivers":           drivers_val,
+            "mc_number":         get("mc/mx/ff number(s)"),
+            "entity_type":       get("entity type"),
+            "safer_url":         safer_url,
+        }
     except Exception as e:
         logger.error(f"SAFER lookup error: {e}")
         return {"error": str(e), "safer_url": safer_url}
+
+
+# ─── Fleet vehicles endpoint (truck-centric) ──────────────────────────────────
+
+def _demo_refills():
+    """Realistic demo fuel refill events spanning the past 7 days."""
+    from datetime import timezone, timedelta
+    now = datetime.now(timezone.utc)
+    return [
+        # Today
+        {"vehicle_id": "d01", "truck": "Truck 14 — Peterbilt 389",
+         "timestamp": (now - timedelta(hours=3, minutes=22)).isoformat(),
+         "prev_pct": 12.4, "new_pct": 91.8, "gallons_added": 158.8, "est_cost": 622.50,
+         "location": "Pilot Flying J #372, Gary, IN", "lat": 41.593, "lng": -87.346},
+        {"vehicle_id": "d02", "truck": "Truck 07 — Kenworth T680",
+         "timestamp": (now - timedelta(hours=9, minutes=5)).isoformat(),
+         "prev_pct": 8.1, "new_pct": 88.5, "gallons_added": 160.8, "est_cost": 630.34,
+         "location": "Love's Travel Stop #619, Oklahoma City, OK", "lat": 35.467, "lng": -97.516},
+        # Yesterday
+        {"vehicle_id": "d03", "truck": "Truck 22 — Freightliner Cascadia",
+         "timestamp": (now - timedelta(days=1, hours=2, minutes=47)).isoformat(),
+         "prev_pct": 19.3, "new_pct": 95.0, "gallons_added": 151.4, "est_cost": 593.49,
+         "location": "TA Travel Center, Amarillo, TX", "lat": 35.222, "lng": -101.831},
+        {"vehicle_id": "d04", "truck": "Truck 31 — Volvo VNL 860",
+         "timestamp": (now - timedelta(days=1, hours=14, minutes=15)).isoformat(),
+         "prev_pct": 6.7, "new_pct": 90.2, "gallons_added": 167.0, "est_cost": 654.64,
+         "location": "Pilot Flying J #1204, Columbus, OH", "lat": 39.961, "lng": -82.999},
+        # 2 days ago
+        {"vehicle_id": "d05", "truck": "Truck 09 — International LT",
+         "timestamp": (now - timedelta(days=2, hours=6, minutes=33)).isoformat(),
+         "prev_pct": 22.1, "new_pct": 89.6, "gallons_added": 135.0, "est_cost": 529.20,
+         "location": "Love's Travel Stop #287, Nashville, TN", "lat": 36.174, "lng": -86.767},
+        {"vehicle_id": "d01", "truck": "Truck 14 — Peterbilt 389",
+         "timestamp": (now - timedelta(days=2, hours=19, minutes=10)).isoformat(),
+         "prev_pct": 10.2, "new_pct": 93.1, "gallons_added": 165.8, "est_cost": 649.94,
+         "location": "Pilot Flying J #588, Memphis, TN", "lat": 35.149, "lng": -90.048},
+        # 3 days ago
+        {"vehicle_id": "d06", "truck": "Truck 18 — Mack Anthem",
+         "timestamp": (now - timedelta(days=3, hours=4, minutes=55)).isoformat(),
+         "prev_pct": 15.0, "new_pct": 90.5, "gallons_added": 151.0, "est_cost": 591.92,
+         "location": "TA Travel Center, Dallas, TX", "lat": 32.776, "lng": -96.797},
+        {"vehicle_id": "d02", "truck": "Truck 07 — Kenworth T680",
+         "timestamp": (now - timedelta(days=3, hours=16, minutes=22)).isoformat(),
+         "prev_pct": 9.4, "new_pct": 87.9, "gallons_added": 157.0, "est_cost": 615.44,
+         "location": "Pilot Flying J #201, St. Louis, MO", "lat": 38.627, "lng": -90.199},
+        # 4 days ago
+        {"vehicle_id": "d07", "truck": "Truck 03 — Peterbilt 579",
+         "timestamp": (now - timedelta(days=4, hours=8, minutes=40)).isoformat(),
+         "prev_pct": 18.5, "new_pct": 94.2, "gallons_added": 151.4, "est_cost": 593.49,
+         "location": "Love's Travel Stop #441, Denver, CO", "lat": 39.739, "lng": -104.984},
+        {"vehicle_id": "d05", "truck": "Truck 09 — International LT",
+         "timestamp": (now - timedelta(days=4, hours=21, minutes=8)).isoformat(),
+         "prev_pct": 11.3, "new_pct": 88.0, "gallons_added": 153.4, "est_cost": 601.33,
+         "location": "Pilot Flying J #903, Indianapolis, IN", "lat": 39.768, "lng": -86.158},
+        # 5 days ago
+        {"vehicle_id": "d03", "truck": "Truck 22 — Freightliner Cascadia",
+         "timestamp": (now - timedelta(days=5, hours=3, minutes=15)).isoformat(),
+         "prev_pct": 7.8, "new_pct": 91.0, "gallons_added": 166.4, "est_cost": 652.29,
+         "location": "TA Travel Center, Albuquerque, NM", "lat": 35.085, "lng": -106.651},
+        {"vehicle_id": "d06", "truck": "Truck 18 — Mack Anthem",
+         "timestamp": (now - timedelta(days=5, hours=17, minutes=30)).isoformat(),
+         "prev_pct": 14.2, "new_pct": 89.8, "gallons_added": 151.2, "est_cost": 592.70,
+         "location": "Love's Travel Stop #712, Kansas City, MO", "lat": 39.099, "lng": -94.578},
+        # 6 days ago
+        {"vehicle_id": "d04", "truck": "Truck 31 — Volvo VNL 860",
+         "timestamp": (now - timedelta(days=6, hours=10, minutes=5)).isoformat(),
+         "prev_pct": 5.9, "new_pct": 92.3, "gallons_added": 172.8, "est_cost": 677.38,
+         "location": "Pilot Flying J #756, Atlanta, GA", "lat": 33.749, "lng": -84.388},
+        {"vehicle_id": "d07", "truck": "Truck 03 — Peterbilt 579",
+         "timestamp": (now - timedelta(days=6, hours=22, minutes=44)).isoformat(),
+         "prev_pct": 16.7, "new_pct": 93.5, "gallons_added": 153.6, "est_cost": 602.11,
+         "location": "TA Travel Center, Phoenix, AZ", "lat": 33.449, "lng": -112.074},
+    ]
+
+
+@app.get("/api/fleet/vehicles")
+async def api_fleet_vehicles():
+    """Truck-centric view: vehicles with telemetry + assigned driver"""
+    drivers = list(ACTIVE_DRIVERS.values())
+    trucks = []
+    TANK_GAL = 200  # standard semi capacity
+    for d in drivers:
+        tel = d.get("telemetry") or {}
+        fuel_pct = tel.get("fuel_percent")
+        odo = tel.get("odometer_miles")
+        trucks.append({
+            "truck_name":    d.get("truck", "Unknown"),
+            "driver_id":     d.get("id"),
+            "driver_name":   d.get("name", "Unassigned"),
+            "status":        d.get("status"),
+            "location":      d.get("current_location", {}).get("address", ""),
+            "lat":           d.get("current_location", {}).get("lat", 0),
+            "lng":           d.get("current_location", {}).get("lng", 0),
+            "speed_mph":     d.get("current_location", {}).get("speed_mph", 0),
+            "fuel_percent":  fuel_pct,
+            "fuel_gallons":  round(fuel_pct / 100 * TANK_GAL, 1) if fuel_pct is not None else None,
+            "engine_state":  tel.get("engine_state", "Unknown"),
+            "odometer_miles": odo,
+            "hos_drive_rem": d.get("hos", {}).get("drive_time_remaining_mins", 0),
+            "source":        d.get("source"),
+            # Maintenance flags based on odometer intervals
+            "maintenance": {
+                "oil_change_due":    odo is not None and (odo % 25000) > 22000,
+                "tire_rotation_due": odo is not None and (odo % 50000) > 47000,
+                "inspection_due":    odo is not None and (odo % 100000) > 97000,
+            },
+        })
+    trucks.sort(key=lambda t: t["truck_name"])
+    # Summary stats
+    client = samsara_module.get_client()
+    if client:
+        refills = client.get_refill_events()  # real Samsara data only
+    else:
+        refills = _demo_refills()             # demo mode only
+    return {
+        "trucks":   trucks,
+        "count":    len(trucks),
+        "refills":  refills[:100],
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@app.get("/api/fuel/events")
+async def api_fuel_events():
+    client = samsara_module.get_client()
+    if client:
+        events = client.get_refill_events()
+    else:
+        events = _demo_refills()
+    return {"events": events, "count": len(events)}
 
 
 # ─── Dispatcher data WebSocket ────────────────────────────────────────────────
@@ -614,6 +903,9 @@ async def run_voice_session(
         response_modalities=["AUDIO"],
         system_instruction=system_prompt,
         tools=tools_list,
+        speech_config=types.SpeechConfig(language_code="en-US"),
+        input_audio_transcription=types.AudioTranscriptionConfig(),
+        output_audio_transcription=types.AudioTranscriptionConfig(),
     )
 
     async with client.aio.live.connect(model=MODEL, config=config) as session:
@@ -657,12 +949,46 @@ async def run_voice_session(
                 logger.error(f"receive_from_browser error [{session_id}]: {e}")
 
         async def send_to_browser():
+            input_transcript_buf = ""
+            output_transcript_buf = ""
             try:
                 while True:
                     async for response in session.receive():
                         try:
                             if response.server_content:
                                 sc = response.server_content
+                                # User voice transcription — accumulate, send on finished or when substantial
+                                if sc.input_transcription and sc.input_transcription.text:
+                                    input_transcript_buf += sc.input_transcription.text
+                                    if sc.input_transcription.finished is True:
+                                        if input_transcript_buf.strip():
+                                            await websocket.send_text(json.dumps({
+                                                "type": "transcript",
+                                                "text": input_transcript_buf.strip(),
+                                                "speaker": "user",
+                                            }))
+                                        input_transcript_buf = ""
+                                    elif input_transcript_buf.strip():
+                                        # Send partial user transcript for real-time feedback
+                                        await websocket.send_text(json.dumps({
+                                            "type": "transcript",
+                                            "text": input_transcript_buf.strip(),
+                                            "speaker": "user",
+                                            "partial": True,
+                                        }))
+                                # Trucky output transcription — send every non-empty chunk immediately
+                                if sc.output_transcription and sc.output_transcription.text:
+                                    chunk = sc.output_transcription.text.strip()
+                                    if chunk:
+                                        output_transcript_buf += (" " if output_transcript_buf else "") + chunk
+                                        await websocket.send_text(json.dumps({
+                                            "type": "transcript",
+                                            "text": output_transcript_buf.strip(),
+                                            "speaker": "trucky",
+                                            "partial": sc.output_transcription.finished is not True,
+                                        }))
+                                    if sc.output_transcription.finished:
+                                        output_transcript_buf = ""
                                 if sc.model_turn:
                                     for part in sc.model_turn.parts:
                                         if hasattr(part, "thought") and part.thought:
@@ -680,6 +1006,22 @@ async def run_voice_session(
                                             }))
 
                                 if sc.turn_complete:
+                                    # Flush any unsent transcript buffers on turn end
+                                    if input_transcript_buf.strip():
+                                        await websocket.send_text(json.dumps({
+                                            "type": "transcript",
+                                            "text": input_transcript_buf.strip(),
+                                            "speaker": "user",
+                                        }))
+                                        input_transcript_buf = ""
+                                    if output_transcript_buf.strip():
+                                        await websocket.send_text(json.dumps({
+                                            "type": "transcript",
+                                            "text": output_transcript_buf.strip(),
+                                            "speaker": "trucky",
+                                            "partial": False,
+                                        }))
+                                        output_transcript_buf = ""
                                     await websocket.send_text(json.dumps({"type": "turn_complete"}))
 
                             elif response.data:
@@ -770,6 +1112,7 @@ async def run_voice_session(
 @app.websocket("/ws/voice/{driver_id}")
 async def driver_voice_websocket(websocket: WebSocket, driver_id: str):
     await websocket.accept()
+    dispatcher_connections.add(websocket)  # receive load_update / new_message broadcasts
     logger.info(f"Driver voice WS connected: {driver_id}")
 
     driver = get_driver(driver_id)
@@ -792,6 +1135,8 @@ async def driver_voice_websocket(websocket: WebSocket, driver_id: str):
             await websocket.send_text(json.dumps({"type": "error", "message": str(e)}))
         except Exception:
             pass
+    finally:
+        dispatcher_connections.discard(websocket)
 
 
 # ─── Dispatcher voice WebSocket ───────────────────────────────────────────────
@@ -800,7 +1145,14 @@ async def driver_voice_websocket(websocket: WebSocket, driver_id: str):
 @app.websocket("/ws/dispatcher/voice")
 async def dispatcher_voice_websocket(websocket: WebSocket):
     await websocket.accept()
+    dispatcher_connections.add(websocket)
     logger.info("Dispatcher voice WS connected")
+
+    # Send any unread messages immediately on connect
+    if MESSAGES:
+        unread = [m for m in MESSAGES if not m.get("read")]
+        if unread:
+            await websocket.send_text(json.dumps({"type": "messages_snapshot", "messages": unread[-20:]}))
 
     try:
         await run_voice_session(
@@ -819,6 +1171,8 @@ async def dispatcher_voice_websocket(websocket: WebSocket):
             await websocket.send_text(json.dumps({"type": "error", "message": str(e)}))
         except Exception:
             pass
+    finally:
+        dispatcher_connections.discard(websocket)
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 # Bonus points: Infrastructure-as-Code for hackathon submission
 
 substitutions:
-  _SERVICE_NAME: truckly-backend
+  _SERVICE_NAME: trucky-backend
   _REGION: us-central1
 
 steps:

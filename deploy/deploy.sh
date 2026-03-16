@@ -7,7 +7,7 @@ set -e
 # ─── Config (override via env vars) ──────────────────────────────────────────
 PROJECT_ID="${GCP_PROJECT_ID:-your-gcp-project-id}"
 REGION="${GCP_REGION:-us-central1}"
-SERVICE_NAME="truckly-backend"
+SERVICE_NAME="trucky-backend"
 IMAGE="gcr.io/${PROJECT_ID}/${SERVICE_NAME}"
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -66,11 +66,19 @@ DEPLOY_ARGS=(
 )
 
 # Set environment variables
+ENV_VARS=""
 if [ "${USE_VERTEX_AI}" = "true" ]; then
-  DEPLOY_ARGS+=("--set-env-vars=USE_VERTEX_AI=true,GCP_PROJECT_ID=${PROJECT_ID},GCP_REGION=${REGION}")
+  ENV_VARS="USE_VERTEX_AI=true,GCP_PROJECT_ID=${PROJECT_ID},GCP_REGION=${REGION}"
 else
-  DEPLOY_ARGS+=("--set-env-vars=GEMINI_API_KEY=${GEMINI_API_KEY}")
+  ENV_VARS="GEMINI_API_KEY=${GEMINI_API_KEY}"
 fi
+
+# Append Samsara key if provided
+if [ -n "${SAMSARA_API_KEY}" ]; then
+  ENV_VARS="${ENV_VARS},SAMSARA_API_KEY=${SAMSARA_API_KEY}"
+fi
+
+DEPLOY_ARGS+=("--set-env-vars=${ENV_VARS}")
 
 gcloud run deploy "${DEPLOY_ARGS[@]}" --quiet
 

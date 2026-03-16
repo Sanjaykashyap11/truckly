@@ -1,64 +1,88 @@
-# Truckly — AI Voice Co-Pilot for Commercial Truck Drivers
+# 🚛 Trucky — AI-Native Fleet OS
 
-> **Gemini Live Agent Hackathon Submission** — Category: **Live Agents**
+> **Gemini Live Agent Hackathon Submission** · Category: **Live Agents** · Deadline: March 16, 2026
+> `#GeminiLiveAgentChallenge`
 
-Truckly is a real-time voice AI co-pilot ("Sally") for commercial truck drivers that replaces 5+ fragmented apps with one hands-free conversation. Sally handles HOS compliance, truck-safe routing, fuel stop optimization, and breakdown emergencies — all while the driver keeps both hands on the wheel and eyes on the road.
+Trucky is a voice-first, AI-native fleet operating system for commercial trucking. Dispatchers manage their entire fleet hands-free. Drivers get a real-time AI co-pilot that handles HOS compliance, route safety, load assignments, fatigue monitoring, and two-way messaging — all without touching a screen.
+
+Built on **Gemini 2.5 Flash Native Audio**, powered by **real Samsara ELD data from JY Carriers** (49 active drivers), deployed on **Google Cloud Run**.
 
 ---
 
-## The Problem
+## The Problem — 500,000 Crashes a Year
 
-Every day, commercial truck drivers operate 80,000 lb vehicles while juggling:
-- GPS apps that don't know about bridge clearances or parkway bans (80% of bridge strikes caused by consumer GPS)
-- ELD screens showing HOS status they have to manually interpret (~40% of drivers exceed HOS limits)
-- Phone calls to dispatchers, shippers, and receivers mid-drive
-- Manual fuel price searches while moving
+Large trucks are 4% of vehicles on the road and cause **10% of all fatal U.S. crashes**. The root causes are well-documented:
 
-**Sally fixes all of this. Hands-free. In real time.**
+| Crisis | Data | Source |
+|--------|------|--------|
+| Distracted driving | **3,308 deaths/year** | NHTSA 2022 |
+| Bridge strikes from wrong GPS | **80% from consumer GPS** | FMCSA / Sen. Schumer |
+| HOS violations | **~40% of drivers exceed limits** | FMCSA Survey 2020 |
+| Fatigue crashes | **14% of large truck accidents** | FMCSA Fatigue Report |
+| GPS incidents resulting in crash | **57% — 28% fatal** | Northwestern / UMN / UBremen |
+| Congestion cost | **$108B/year · 1.2B hours lost** | ATRI 2022 |
+
+The cause isn't bad drivers — it's fragmented tools. Dispatchers juggle spreadsheets, phone calls, and 3 different apps. Drivers switch between GPS, ELD screens, and dispatch calls while operating 80,000 lb vehicles.
+
+**Trucky replaces all of that with one voice conversation.**
 
 ---
 
 ## Architecture
 
+![Architecture Diagram](docs/architecture.svg)
+
 ```
-┌─────────────────────────────────────────────────────────┐
-│                      Browser (Driver)                    │
-│  Web Audio API → PCM16 16kHz → WebSocket → Backend      │
-│  Backend → PCM16 24kHz → Web Audio API → Plays audio    │
-└───────────────────┬─────────────────────────────────────┘
-                    │ WebSocket (bidirectional audio)
-┌───────────────────▼─────────────────────────────────────┐
-│              FastAPI Backend (Cloud Run)                  │
-│                                                          │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │           Gemini Live API Bridge                 │    │
-│  │  • Streams audio to/from Gemini 2.0 Flash Live  │    │
-│  │  • Handles function calling (tools)              │    │
-│  │  • System prompt with live driver context        │    │
-│  └──────────────────────┬──────────────────────────┘    │
-│                         │                                │
-│  ┌──────────────────────▼──────────────────────────┐    │
-│  │              Tool Handlers                       │    │
-│  │  check_hos_status     → Live ELD data (mocked)  │    │
-│  │  check_route_safety   → Parkway/bridge DB        │    │
-│  │  find_fuel_stops      → Fuel card pricing        │    │
-│  │  handle_breakdown     → Mechanic dispatch        │    │
-│  │  notify_stakeholders  → Auto SMS/dashboard       │    │
-│  └─────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────┘
-                    │ REST API
-┌───────────────────▼─────────────────────────────────────┐
-│            Next.js Frontend (Vercel/Static)               │
-│  • Dispatcher Dashboard — fleet overview, live alerts    │
-│  • Driver Voice Interface — talk to Sally                │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────┐     WebSocket (PCM16 16kHz)      ┌─────────────────────────────────────────┐
+│  Dispatcher TMS     │◄────────────────────────────────►│                                         │
+│  Next.js 15         │     REST API + WS broadcasts      │    FastAPI Backend · Cloud Run           │
+├─────────────────────┤                                   │                                         │
+│  Driver App         │◄────────────────────────────────►│  ┌─────────────────────────────────┐    │
+│  Next.js 15         │     Bidirectional PCM16 audio     │  │   Gemini Live API Bridge        │    │
+│  Web Audio API      │                                   │  │   google-genai · v1alpha        │    │
+└─────────────────────┘                                   │  │   Gemini 2.5 Flash Native Audio │    │
+                                                          │  └──────────────┬──────────────────┘    │
+         ┌────────────────────────────────────────────────┤                 │ function calls         │
+         │                                                │  ┌──────────────▼──────────────────┐    │
+         │                                                │  │   Tool Handlers (tools.py)      │    │
+         ▼                                                │  │   create_load · assign_load     │    │
+┌─────────────────────┐                                   │  │   get_my_loads · plan_trip      │    │
+│  Samsara ELD API    │◄──────────────────────────────────│  │   check_hos_status              │    │
+│  JY Carriers fleet  │   HTTPS · Bearer auth             │  │   send_message_to_driver/disp   │    │
+│  49 live drivers    │                                   │  │   handle_breakdown · find_fuel  │    │
+└─────────────────────┘                                   │  └──────────────┬──────────────────┘    │
+                                                          │                 │                        │
+┌─────────────────────┐                                   │  ┌──────────────▼──────────────────┐    │
+│  Gemini Live API    │◄──────────────────────────────────│  │   Shared State (state.py)       │    │
+│  Google Cloud AI    │   Audio stream + tool responses   │  │   LOADS · MESSAGES · broadcast  │    │
+└─────────────────────┘                                   │  └─────────────────────────────────┘    │
+                                                          │                                         │
+┌─────────────────────┐                                   └─────────────────────────────────────────┘
+│  OSRM + Nominatim   │◄──────────────────────────────── trip_planner.py · FMCSA HOS routing
+│  Routing + Geocode  │
+└─────────────────────┘
 ```
 
 ### Google Cloud Services Used
-- **Cloud Run** — Serverless backend hosting (auto-scales, handles WebSocket long connections)
-- **Cloud Build** — Automated CI/CD pipeline (`deploy/cloudbuild.yaml`)
-- **Container Registry** — Docker image storage
-- **Vertex AI / Gemini Live API** — Real-time voice AI (gemini-2.0-flash-live-001)
+
+| Service | Purpose |
+|---------|---------|
+| **Cloud Run** | Serverless backend — auto-scales, handles long-lived WebSocket connections (timeout: 3600s) |
+| **Cloud Build** | Automated CI/CD pipeline (`deploy/cloudbuild.yaml`) — IaC bonus point |
+| **Container Registry** | Docker image storage |
+| **Gemini Live API** | Gemini 2.5 Flash Native Audio — bidirectional real-time voice AI |
+| **Vertex AI** | Alternative auth path for Gemini (GCP service account) |
+
+---
+
+## Real Data — JY Carriers Partnership
+
+This is not a demo with fake data. **JY Carriers**, a real U.S. trucking company, provided access to their live Samsara ELD fleet:
+
+- **49 active drivers** with real-time GPS, HOS clocks, fuel levels, and engine state
+- Live HOS remaining hours — used to determine FMCSA compliance for every dispatch decision
+- Real fuel telemetry — 7-day refill history with anomaly filtering
+- Dispatcher voice commands query this live data when making routing and assignment decisions
 
 ---
 
@@ -66,123 +90,95 @@ Every day, commercial truck drivers operate 80,000 lb vehicles while juggling:
 
 | Layer | Technology |
 |-------|-----------|
-| Voice AI | Gemini 2.0 Flash Live API (Live Agents) |
-| AI SDK | Google GenAI SDK (`google-genai`) |
-| Backend | Python 3.12, FastAPI, WebSocket |
-| Frontend | Next.js 15, TypeScript, Tailwind CSS |
+| Voice AI | Gemini 2.5 Flash Native Audio (Live API) |
+| AI SDK | Google GenAI SDK (`google-genai`) · `v1alpha` |
+| Backend | Python 3.12 · FastAPI · uvicorn · WebSocket |
+| Frontend | Next.js 15 · TypeScript · Web Audio API |
+| ELD Integration | Samsara REST API · httpx async |
+| Routing | OSRM · Nominatim geocoding |
 | Deployment | Google Cloud Run |
-| CI/CD | Cloud Build (`cloudbuild.yaml`) |
+| CI/CD | Cloud Build (`deploy/cloudbuild.yaml`) |
 
 ---
 
-## Quick Start (Local)
+## Quick Start (Local Dev)
 
 ### Prerequisites
 - Python 3.12+
 - Node.js 18+
-- A Gemini API key ([get one here](https://aistudio.google.com/app/apikey))
+- Gemini API key — [get one at aistudio.google.com](https://aistudio.google.com/app/apikey)
 
-### 1. Clone the repo
+### 1. Clone
+
 ```bash
 git clone https://github.com/Sanjaykashyap11/truckly.git
 cd truckly
 ```
 
-### 2. Backend setup
+### 2. Backend
+
 ```bash
 cd backend
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# Create .env file
+# Configure environment
 cp ../.env.example .env
-# Edit .env and add your GEMINI_API_KEY
+# Edit .env — add GEMINI_API_KEY and SAMSARA_API_KEY
 
-# Start backend
-python main.py
-# Backend runs on http://localhost:8080
+# Start
+uvicorn main:app --host 0.0.0.0 --port 8080 --reload
+# Backend: http://localhost:8080
+# Health:  http://localhost:8080/health
 ```
 
-### 3. Frontend setup
+### 3. Frontend
+
 ```bash
 cd frontend
 npm install
 
-# Create .env.local
+# Configure
 echo "NEXT_PUBLIC_API_URL=http://localhost:8080" > .env.local
 echo "NEXT_PUBLIC_WS_URL=ws://localhost:8080" >> .env.local
 
-# Start frontend
+# Start
 npm run dev
-# Frontend runs on http://localhost:3000
+# Frontend: http://localhost:3000
 ```
 
 ### 4. Open the app
-- **Dispatcher Dashboard**: http://localhost:3000
-- **Driver Voice Interface**: http://localhost:3000/driver
+
+| URL | Interface |
+|-----|-----------|
+| http://localhost:3000 | Home page (impact + features) |
+| http://localhost:3000/dispatcher | Dispatcher TMS (voice + load board) |
+| http://localhost:3000/driver | Driver App (voice co-pilot) |
 
 ---
 
 ## Demo Scenarios
 
-Once connected, try these voice commands (or click the demo buttons in the UI):
+### Dispatcher Voice Commands
 
-| Scenario | What to say | What happens |
-|----------|-------------|--------------|
-| HOS Check | "Hey Sally, how are my hours looking for Boston?" | Sally calls `check_hos_status` and responds with remaining drive time |
-| Parkway Alert | "My GPS shows a faster route through Merritt Parkway" | Sally immediately flags it as TRUCK PROHIBITED, reroutes via I-95 |
-| Fatigue Prevention | "The receiver wants me to push through and deliver tonight" | Sally calculates HOS violation risk, refuses, notifies receiver |
-| Breakdown | "Sally — tire blowout, I-95 Exit 24 NJ" | Sally activates breakdown protocol, contacts mechanics, notifies all stakeholders |
-| Fuel Stop | "I need a fuel stop soon" | Sally finds cheapest diesel on route, aligned with HOS break |
+| Say this | What happens |
+|----------|-------------|
+| "Trucky, who can make it to Chicago by 6pm?" | Queries live HOS clocks, calculates drive time per driver, returns best match |
+| "Create a load from Boston to Newark, $1,850, assign to Ahmed" | Creates load, assigns driver, updates load board, broadcasts to all screens |
+| "Send a message to Oscar saying his situation will be handled" | Sends message to driver app, appears in Messages tab |
+| "Who's running low on fuel right now?" | Queries Samsara fuel telemetry for all 49 drivers |
+| "Can Ahmed make it to Newark before his 11-hour clock runs out?" | FMCSA HOS compliance check with OSRM drive time |
 
----
+### Driver Voice Commands
 
-## Deploy to Google Cloud Run
-
-### Option A: Manual deploy
-```bash
-export GCP_PROJECT_ID=your-project-id
-export GEMINI_API_KEY=your-api-key
-
-chmod +x deploy/deploy.sh
-./deploy/deploy.sh
-```
-
-### Option B: Cloud Build (automated CI/CD)
-```bash
-gcloud builds submit --config deploy/cloudbuild.yaml \
-  --substitutions _SERVICE_NAME=truckly-backend,_REGION=us-central1
-```
-
-After deployment, update your frontend environment:
-```bash
-# In frontend/.env.local (or Vercel env vars)
-NEXT_PUBLIC_API_URL=https://truckly-backend-xxx-uc.a.run.app
-NEXT_PUBLIC_WS_URL=wss://truckly-backend-xxx-uc.a.run.app
-```
-
----
-
-## Key Features
-
-### For Drivers (Voice First)
-- **Hands-free HOS monitoring** — "How are my hours?" → instant spoken answer
-- **Parkway & bridge strike prevention** — real-time rerouting before the driver reaches a restricted road
-- **Fatigue prevention** — refuses to confirm trips that would create HOS violations
-- **Breakdown emergency protocol** — contacts mechanics, notifies stakeholders in < 3 min
-- **Fuel optimization** — finds cheapest diesel on route, aligned with mandatory breaks
-
-### For Dispatchers (Web Dashboard)
-- **Live fleet overview** — all drivers, HOS status, locations
-- **Real-time alerts** — auto-generated by Sally, auto-resolved where possible
-- **Zero phone calls from drivers** — Sally handles all stakeholder communication
-
-### Technical Highlights
-- **Gemini Live API** — bidirectional audio streaming with natural interruption handling
-- **Function calling** — Sally invokes real tools (HOS check, route validation) mid-conversation
-- **WebSocket bridge** — browser PCM16 audio → Gemini Live API → PCM16 back to browser
-- **Context-aware** — Sally knows the driver's HOS status, truck specs, and route at all times
+| Say this | What happens |
+|----------|-------------|
+| "Trucky, what loads do I have?" | Calls `get_my_loads` — returns live load board assignments |
+| "My GPS shows Merritt Parkway as faster" | Sally flags: TRUCK PROHIBITED — 12'6" clearance, auto-reroutes via I-95 |
+| "I'm getting tired, I need to rest" | Sends priority alert to dispatcher dashboard instantly |
+| "Tire blowout, I-95 Exit 24" | Activates breakdown protocol — mechanic dispatch, stakeholder notifications |
+| "How are my hours looking?" | Returns FMCSA HOS remaining drive time, next mandatory break |
 
 ---
 
@@ -191,47 +187,103 @@ NEXT_PUBLIC_WS_URL=wss://truckly-backend-xxx-uc.a.run.app
 ```
 truckly/
 ├── backend/
-│   ├── main.py          # FastAPI server + Gemini Live WebSocket bridge
-│   ├── tools.py         # Tool definitions + handlers (HOS, routing, fuel, breakdown)
-│   ├── mock_data.py     # Mock ELD/TMS data (3 demo drivers)
+│   ├── main.py           # FastAPI server + Gemini Live WebSocket bridge
+│   ├── tools.py          # Tool definitions + handlers (10 tools)
+│   ├── samsara.py        # Samsara ELD API integration (live fleet data)
+│   ├── trip_planner.py   # FMCSA HOS-aware routing (OSRM + Nominatim)
+│   ├── state.py          # Shared mutable state (LOADS, MESSAGES, broadcast)
+│   ├── mock_data.py      # Fallback mock data for offline dev
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── frontend/
 │   ├── app/
-│   │   ├── page.tsx         # Dispatcher dashboard
-│   │   └── driver/page.tsx  # Driver voice interface
-│   ├── package.json
-│   └── ...
+│   │   ├── page.tsx              # Home page (impact, features, CTA)
+│   │   ├── dispatcher/page.tsx   # Dispatcher TMS — voice + load board + messages
+│   │   └── driver/page.tsx       # Driver app — voice co-pilot + load view
+│   └── package.json
 ├── deploy/
-│   ├── deploy.sh        # Cloud Run deployment script
-│   └── cloudbuild.yaml  # Automated CI/CD
+│   ├── deploy.sh           # Cloud Run deployment script (manual)
+│   └── cloudbuild.yaml     # Cloud Build CI/CD (automated IaC)
+├── docs/
+│   └── architecture.svg    # System architecture diagram
 ├── .env.example
 └── README.md
 ```
 
 ---
 
-## Safety Impact
+## Deploy to Google Cloud Run
 
-Truckly directly addresses FMCSA's top commercial vehicle safety priorities:
+### Option A — Manual deploy
 
-| Problem | FMCSA Data | Truckly Solution |
-|---------|-----------|-----------------|
-| Distracted driving | 3,308 deaths/yr (NHTSA 2022) | Replaces 5+ apps with one hands-free voice AI |
-| Bridge strikes from wrong GPS | 80% caused by consumer GPS (FMCSA/Schumer) | Full truck-height routing, proactive parkway alerts |
-| HOS violations | ~40% of drivers exceed limits (FMCSA Survey 2020) | Proactive planning, 45-min warnings, violation prevention |
-| Fatigue crashes | 14% of truck crashes (FMCSA) | Intelligent rest planning, refuses illegal schedules |
+```bash
+export GCP_PROJECT_ID=your-project-id
+export GEMINI_API_KEY=your-gemini-key
+export SAMSARA_API_KEY=your-samsara-key   # optional — falls back to mock data
+
+chmod +x deploy/deploy.sh
+./deploy/deploy.sh
+```
+
+### Option B — Cloud Build (automated CI/CD · IaC)
+
+```bash
+gcloud builds submit \
+  --config deploy/cloudbuild.yaml \
+  --substitutions _SERVICE_NAME=trucky-backend,_REGION=us-central1
+```
+
+### After deployment — update frontend
+
+```bash
+# frontend/.env.local
+NEXT_PUBLIC_API_URL=https://trucky-backend-xxx-uc.a.run.app
+NEXT_PUBLIC_WS_URL=wss://trucky-backend-xxx-uc.a.run.app
+```
+
+---
+
+## Key Technical Decisions
+
+### Why `state.py`?
+When running `python main.py`, the module loads as `__main__`. If `tools.py` imports `from main import LOADS`, Python creates a fresh second module copy — both have separate empty lists. Tool handlers wrote to one list; REST API read from another. `state.py` provides a single shared import for all modules, eliminating the race condition.
+
+### Why Gemini 2.5 Flash Native Audio?
+Native audio mode skips the ASR → text → TTS round-trip, enabling true barge-in (drivers can interrupt mid-sentence), sub-200ms response latency, and natural prosody — critical when a driver needs to report an emergency while driving.
+
+### Why `speech_config(language_code="en-US")`?
+Without it, Gemini's ASR sometimes transcribes accented English as other languages (Hindi, etc.). Forcing `en-US` keeps transcripts clean regardless of accent.
+
+### Why `turn_complete` for transcript deduplication?
+Gemini fires `partial=false` per segment boundary, not per full turn. Gating the "Trucky spoke" flag on `turn_complete` prevents duplicate transcript bubbles when Trucky gives multi-sentence answers.
+
+---
+
+## Safety Impact — FMCSA Alignment
+
+Trucky's mission directly mirrors FMCSA's mandate: reduce commercial motor vehicle fatalities and injuries on U.S. highways.
+
+| FMCSA Priority | Trucky Solution |
+|----------------|----------------|
+| Distracted driving (3,308 deaths/yr) | Replaces 5+ apps with one hands-free voice conversation |
+| Bridge strikes (80% from consumer GPS) | Full truck-height routing database, proactive parkway alerts |
+| HOS violations (~40% of drivers) | Proactive FMCSA rule enforcement, violation prevention before dispatch |
+| Fatigue crashes (14% of truck accidents) | Fatigue detection → instant dispatcher alert + rest planning |
+| Illegal route compliance | 7 Northeast parkway database with alternatives and time diffs |
 
 ---
 
 ## Findings & Learnings
 
-- **Gemini Live API barge-in** works naturally for driver interruptions — no special handling needed
+- **Gemini Live barge-in** works naturally for driver interruptions — no special handling needed
 - **PCM16 at 16kHz input / 24kHz output** is the key format mismatch to handle in the browser
-- **Function calling mid-conversation** with Live API requires sending `LiveClientToolResponse` back immediately before Gemini continues
-- **WebSocket timeout** on Cloud Run requires `--timeout=3600` flag for long voice sessions
-- **System prompt context** with live driver data (HOS, route, truck specs) dramatically improves response quality and safety
+- **Function calling mid-conversation** requires sending `LiveClientToolResponse` back immediately before Gemini continues speaking
+- **WebSocket timeout on Cloud Run** requires `--timeout=3600` flag for long voice sessions
+- **Module naming (`__main__` vs `main`)** causes subtle shared-state bugs in Python when tools import from the main module — solved by a dedicated `state.py`
+- **Persistent 24kHz AudioContext** with scheduled chunk playback eliminates audio gaps between sentences
+- **System prompt with live context** (HOS clocks, loads, driver name) dramatically improves response relevance and safety
 
 ---
 
 *Built for the Gemini Live Agent Hackathon — #GeminiLiveAgentChallenge*
+*Real fleet data provided by JY Carriers via Samsara ELD API*
