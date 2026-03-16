@@ -285,5 +285,17 @@ Trucky's mission directly mirrors FMCSA's mandate: reduce commercial motor vehic
 
 ---
 
+---
+
+## Live Deployment
+
+| | URL |
+|-|-----|
+| **Backend (Cloud Run)** | https://trucky-backend-751835462523.us-central1.run.app |
+| **Health check** | https://trucky-backend-751835462523.us-central1.run.app/health |
+| **GitHub** | https://github.com/Sanjaykashyap11/truckly |
+
+---
+
 *Built for the Gemini Live Agent Hackathon — #GeminiLiveAgentChallenge*
 *Real fleet data provided by JY Carriers via Samsara ELD API*
