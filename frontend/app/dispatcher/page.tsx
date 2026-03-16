@@ -1436,16 +1436,19 @@ function AIPanel({ stats, onRefresh }: { stats: FleetStats; onRefresh?: () => vo
         if (speaker === "Trucky") {
           setTranscript(p => {
             const last = p[p.length - 1];
-            if (!truckyTurnDone.current && last?.speaker === "Trucky") {
+            // Replace if last Trucky bubble is a prefix of new text (growing buffer)
+            // OR we're inside the same turn
+            if (last?.speaker === "Trucky" &&
+                (msg.text.startsWith(last.text) || !truckyTurnDone.current)) {
               return [...p.slice(0, -1), { speaker, text: msg.text }];
             }
-            truckyTurnDone.current = false; // inside this turn now
+            truckyTurnDone.current = false;
             return [...p.slice(-40), { speaker, text: msg.text }];
           });
         } else {
           setTranscript(p => {
             const last = p[p.length - 1];
-            if (msg.partial && last?.speaker === "You") {
+            if (last?.speaker === "You") {
               return [...p.slice(0, -1), { speaker, text: msg.text }];
             }
             return [...p.slice(-40), { speaker, text: msg.text }];

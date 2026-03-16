@@ -282,10 +282,12 @@ function DriverSession({ driverId }: { driverId: string }) {
               if (spk === "trucky") {
                 setTranscripts(p => {
                   const last = p[p.length - 1];
-                  if (!truckyTurnDoneRef.current && last?.speaker === "trucky") {
+                  // Replace if growing buffer (new text starts with last) OR same turn
+                  if (last?.speaker === "trucky" &&
+                      (msg.text.startsWith(last.text) || !truckyTurnDoneRef.current)) {
                     return [...p.slice(0, -1), { ...last, text: msg.text }];
                   }
-                  truckyTurnDoneRef.current = false; // inside this turn now
+                  truckyTurnDoneRef.current = false;
                   return [...p, { id: Date.now().toString(), speaker: "trucky", text: msg.text, timestamp: new Date() }];
                 });
               } else {
